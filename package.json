@@ -54,6 +54,7 @@
     "@cloudflare/workers-types": "^5.20261019.1",
     "drizzle-kit": "^0.31.11",
     "eslint": "^10.13.0",
+    "hono": "^4.13.13",
     "prettier": "^3.9.10",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.71.2",
@@ -66,5 +67,8 @@
   "dependencies": {
     "drizzle-orm": "^0.45.4",
     "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "hono": "^4.13.13"
   }
 }
