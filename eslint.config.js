@@ -48,19 +48,86 @@ const subpathBoundary = {
   },
 }
 
+const root = path.dirname(fileURLToPath(import.meta.url))
+
+// ADR-004 layer 2. Convention: tenant tables are declared with tenantTable()
+// and exported from files named *.tables.ts. Only repositories
+// (src/**/repo.ts), the tenancy subpath, other *.tables.ts files (for
+// references between tables) and tests may import values from them; type-only
+// imports are allowed anywhere.
+const tablesModule = /\.tables(\.[cm]?[jt]s)?$/
+
+function mayImportTables(file) {
+  const rel = path.relative(root, file).split(path.sep).join('/')
+  return (
+    /^src\/(.+\/)?repo\.ts$/.test(rel) ||
+    rel.startsWith('src/tenancy/') ||
+    /\.tables\.ts$/.test(rel) ||
+    /\.test\.ts$/.test(rel) ||
+    rel.startsWith('test/')
+  )
+}
+
+const tenantTableAccess = {
+  meta: {
+    type: 'problem',
+    messages: {
+      tenantTable:
+        "'{{source}}' exports tenant tables. Query them through a module repository (src/**/repo.ts) and TenantDb.repo().",
+    },
+    schema: [],
+  },
+  create(context) {
+    if (mayImportTables(context.filename)) return {}
+    const check = (node) => {
+      const source = node.source?.value
+      if (typeof source !== 'string' || !tablesModule.test(source)) return
+      if (node.importKind === 'type' || node.exportKind === 'type') return
+      if (
+        node.specifiers?.length > 0 &&
+        node.specifiers.every(
+          (s) => s.importKind === 'type' || s.exportKind === 'type',
+        )
+      ) {
+        return
+      }
+      context.report({
+        node: node.source,
+        messageId: 'tenantTable',
+        data: { source },
+      })
+    }
+    return {
+      ImportDeclaration: check,
+      ExportAllDeclaration: check,
+      ExportNamedDeclaration: check,
+      ImportExpression: check,
+    }
+  },
+}
+
+const kernel = {
+  rules: {
+    'subpath-boundary': subpathBoundary,
+    'tenant-table-access': tenantTableAccess,
+  },
+}
+
 export default tseslint.config(
   { ignores: ['dist/', 'node_modules/'] },
   ...tseslint.configs.recommended,
   {
     files: ['src/**/*.ts'],
-    plugins: { kernel: { rules: { 'subpath-boundary': subpathBoundary } } },
+    plugins: { kernel },
     rules: {
       'kernel/subpath-boundary': 'error',
     },
   },
   {
     files: ['**/*.ts'],
+    plugins: { kernel },
     rules: {
+      'kernel/tenant-table-access': 'error',
       'no-restricted-imports': [
         'error',
         {

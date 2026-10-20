@@ -17,7 +17,10 @@ export default defineConfig({
   },
   plugins: [
     cloudflareTest({
-      miniflare: { compatibilityDate: '2026-10-01' },
+      miniflare: {
+        compatibilityDate: '2026-10-01',
+        d1Databases: { DB: 'edgekits-kernel-test' },
+      },
     }),
   ],
 })
