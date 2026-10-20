@@ -5,6 +5,7 @@ import {
   text,
   type SQLiteColumnBuilderBase,
   type SQLiteTableExtraConfigValue,
+  type SQLiteTableWithColumns,
 } from 'drizzle-orm/sqlite-core'
 
 declare const tenantBrand: unique symbol
@@ -21,6 +22,19 @@ const names = new Set<string>()
 const orgIdColumn = () => ({ orgId: text('org_id').notNull() })
 type OrgIdColumn = ReturnType<typeof orgIdColumn>
 
+// The table tenantTable() returns. Spelled out so the emitted declaration
+// names it instead of inlining Drizzle's internal type parameters.
+export type TenantTable<
+  TName extends string,
+  TColumns extends Record<string, SQLiteColumnBuilderBase>,
+> = SQLiteTableWithColumns<{
+  name: TName
+  schema: undefined
+  columns: BuildColumns<TName, TColumns & OrgIdColumn, 'sqlite'>
+  dialect: 'sqlite'
+}> &
+  TenantBrand
+
 // Declares a tenant-scoped table: adds the org_id column and its index and
 // registers the table. The caller never declares org_id itself.
 export function tenantTable<
@@ -32,7 +46,7 @@ export function tenantTable<
   extra?: (
     self: BuildColumns<TName, TColumns & OrgIdColumn, 'sqlite'>,
   ) => SQLiteTableExtraConfigValue[],
-) {
+): TenantTable<TName, TColumns> {
   if ('orgId' in columns) {
     throw new Error(
       `tenantTable('${name}') adds org_id itself; remove the orgId column.`,
@@ -45,7 +59,7 @@ export function tenantTable<
   ])
   registry.add(table)
   names.add(name)
-  return table as typeof table & TenantBrand
+  return table as TenantTable<TName, TColumns>
 }
 
 export function isTenantTable(table: Table): boolean {

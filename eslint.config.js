@@ -121,6 +121,9 @@ export default tseslint.config(
     plugins: { kernel },
     rules: {
       'kernel/subpath-boundary': 'error',
+      // Public functions name their return type, so the emitted declarations
+      // reference named types instead of inlining library internals.
+      '@typescript-eslint/explicit-module-boundary-types': 'error',
     },
   },
   {

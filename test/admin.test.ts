@@ -46,6 +46,7 @@ async function signJwt(privateKey: CryptoKey, kid: string, payload: object) {
 let keys: CryptoKeyPair
 let otherKeys: CryptoKeyPair
 let jwks: Jwks
+let rotatedJwks: Jwks
 
 beforeAll(async () => {
   keys = await generateKeys()
@@ -55,6 +56,13 @@ beforeAll(async () => {
     keys.publicKey,
   )) as JsonWebKey
   jwks = { keys: [{ ...publicJwk, kid: 'k1', alg: 'RS256' }] }
+  const otherJwk = (await crypto.subtle.exportKey(
+    'jwk',
+    otherKeys.publicKey,
+  )) as JsonWebKey
+  rotatedJwks = {
+    keys: [...jwks.keys, { ...otherJwk, kid: 'k2', alg: 'RS256' }],
+  }
 })
 
 const claims = (overrides: object = {}) => ({
@@ -174,5 +182,52 @@ describe('@edgekits/kernel/admin', () => {
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
       `${domain}/cdn-cgi/access/certs`,
     )
+  })
+
+  it('refetches the JWKS once when a rotated key signs the token', async () => {
+    const domain = 'https://rotate.cloudflareaccess.com'
+    const fetchJwks = vi
+      .fn<() => Promise<Jwks>>()
+      .mockResolvedValueOnce(jwks)
+      .mockResolvedValue(rotatedJwks)
+    const hono = app({ teamDomain: domain, fetchJwks })
+    const sign = (privateKey: CryptoKey, kid: string) =>
+      signJwt(privateKey, kid, claims({ iss: domain }))
+
+    const before = await sign(keys.privateKey, 'k1')
+    expect((await hono.request('/', withToken(before))).status).toBe(200)
+    expect(fetchJwks).toHaveBeenCalledTimes(1)
+
+    const rotated = await sign(otherKeys.privateKey, 'k2')
+    expect((await hono.request('/', withToken(rotated))).status).toBe(200)
+    expect(fetchJwks).toHaveBeenCalledTimes(2)
+
+    expect((await hono.request('/', withToken(rotated))).status).toBe(200)
+    expect(fetchJwks).toHaveBeenCalledTimes(2)
+  })
+
+  it('throttles refetches for unknown kids to one per minute', async () => {
+    const domain = 'https://throttle.cloudflareaccess.com'
+    const fetchJwks = vi.fn<() => Promise<Jwks>>().mockResolvedValue(jwks)
+    const hono = app({ teamDomain: domain, fetchJwks })
+    const unknown = await signJwt(
+      otherKeys.privateKey,
+      'k9',
+      claims({ iss: domain }),
+    )
+    const start = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(start)
+
+    // First load, then one refetch for the unknown kid.
+    expect((await hono.request('/', withToken(unknown))).status).toBe(403)
+    expect(fetchJwks).toHaveBeenCalledTimes(2)
+
+    clock.mockReturnValue(start + 59_999)
+    expect((await hono.request('/', withToken(unknown))).status).toBe(403)
+    expect(fetchJwks).toHaveBeenCalledTimes(2)
+
+    clock.mockReturnValue(start + 60_000)
+    expect((await hono.request('/', withToken(unknown))).status).toBe(403)
+    expect(fetchJwks).toHaveBeenCalledTimes(3)
   })
 })

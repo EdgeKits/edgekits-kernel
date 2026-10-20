@@ -1,9 +1,12 @@
+import type { MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import type { TenantVariables } from './tenant'
 
 // After the handler: an authenticated response (c.var.tenant set) gets
 // Cache-Control: no-store unless the route set its own Cache-Control.
-export function noStore() {
+export function noStore(): MiddlewareHandler<{
+  Variables: Partial<TenantVariables>
+}> {
   return createMiddleware<{ Variables: Partial<TenantVariables> }>(
     async (c, next) => {
       await next()
@@ -20,7 +23,11 @@ const mutating = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 // present and not in `allowed`, or when Origin is absent and the request
 // carries a Cookie (a browser request whose origin cannot be checked). Other
 // methods, and cookieless requests without Origin, pass.
-export function sameOrigin({ allowed }: { allowed: string[] }) {
+export function sameOrigin({
+  allowed,
+}: {
+  allowed: string[]
+}): MiddlewareHandler {
   const origins = new Set(allowed)
   return createMiddleware(async (c, next) => {
     if (mutating.has(c.req.method)) {

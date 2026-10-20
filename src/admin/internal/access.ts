@@ -1,3 +1,4 @@
+import type { MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { Jwt } from 'hono/utils/jwt'
 import type { AdminId } from '@edgekits/kernel/tenancy'
@@ -15,30 +16,59 @@ export interface AccessIdentityOptions {
   mode: 'production' | 'dev'
   // Used only in mode 'dev', where the header is never read.
   devIdentity?: { id: AdminId; email: string }
-  // Defaults to fetching <teamDomain>/cdn-cgi/access/certs, cached for the
-  // process lifetime.
+  // Loads <teamDomain>/cdn-cgi/access/certs; defaults to fetch(). The result
+  // is cached per JWKS URL for the process lifetime and refetched when a
+  // token names an unknown kid, at most once per 60 seconds per URL.
   fetchJwks?: () => Promise<Jwks>
 }
 
 export type AdminVariables = { admin: AdminContext }
 
-const jwksCache = new Map<string, Promise<Jwks>>()
+const REFETCH_INTERVAL_MS = 60_000
 
-function cachedJwks(url: string): () => Promise<Jwks> {
-  return () => {
-    let jwks = jwksCache.get(url)
-    if (!jwks) {
-      jwks = fetch(url).then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Access JWKS fetch failed: ${response.status}`)
-        }
-        return (await response.json()) as Jwks
-      })
-      // A failed fetch is not cached.
-      jwks.catch(() => jwksCache.delete(url))
-      jwksCache.set(url, jwks)
+interface JwksState {
+  jwks?: Promise<Jwks>
+  refetchedAt: number
+}
+
+const jwksStates = new Map<string, JwksState>()
+
+function fetchFrom(url: string): () => Promise<Jwks> {
+  return async () => {
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`Access JWKS fetch failed: ${response.status}`)
     }
+    return (await response.json()) as Jwks
+  }
+}
+
+// The cached JWKS for one URL. refetch() returns null while throttled, so a
+// stream of tokens with unknown kids costs at most one fetch per interval.
+function jwksCache(url: string, load: () => Promise<Jwks>) {
+  let state = jwksStates.get(url)
+  if (!state) {
+    state = { refetchedAt: -Infinity }
+    jwksStates.set(url, state)
+  }
+  const cached = state
+  const loadNow = () => {
+    const jwks = load()
+    cached.jwks = jwks
+    // A failed fetch is not cached.
+    jwks.catch(() => {
+      if (cached.jwks === jwks) cached.jwks = undefined
+    })
     return jwks
+  }
+  return {
+    current: (): Promise<Jwks> => cached.jwks ?? loadNow(),
+    refetch: (): Promise<Jwks> | null => {
+      const now = Date.now()
+      if (now - cached.refetchedAt < REFETCH_INTERVAL_MS) return null
+      cached.refetchedAt = now
+      return loadNow()
+    },
   }
 }
 
@@ -46,10 +76,12 @@ const requestId = (header: string | undefined) => header ?? crypto.randomUUID()
 
 // ADR-002a: the admin identity comes from the Cf-Access-Jwt-Assertion JWT,
 // verified as RS256 against the team JWKS with iss, aud and exp checked.
-export function accessIdentity(options: AccessIdentityOptions) {
+export function accessIdentity(
+  options: AccessIdentityOptions,
+): MiddlewareHandler<{ Variables: AdminVariables }> {
   const issuer = options.teamDomain.replace(/\/+$/, '')
-  const fetchJwks =
-    options.fetchJwks ?? cachedJwks(`${issuer}/cdn-cgi/access/certs`)
+  const url = `${issuer}/cdn-cgi/access/certs`
+  const jwks = jwksCache(url, options.fetchJwks ?? fetchFrom(url))
   const devIdentity = options.devIdentity
   if (options.mode === 'dev' && !devIdentity) {
     throw new Error("accessIdentity: mode 'dev' requires devIdentity")
@@ -62,10 +94,24 @@ export function accessIdentity(options: AccessIdentityOptions) {
       return next()
     }
 
+    const forbidden = () => c.json({ error: 'forbidden' }, 403)
     const token = c.req.header('Cf-Access-Jwt-Assertion')
-    if (!token) return c.json({ error: 'forbidden' }, 403)
+    if (!token) return forbidden()
+    let kid: string | undefined
+    try {
+      kid = Jwt.decode(token).header.kid
+    } catch {
+      return forbidden()
+    }
+    if (!kid) return forbidden()
     // A JWKS fetch failure is an outage, not a bad token: it propagates.
-    const { keys } = await fetchJwks()
+    let { keys } = await jwks.current()
+    if (!keys.some((key) => key.kid === kid)) {
+      // Access rotates its signing keys: an unknown kid refetches the JWKS.
+      const refetched = jwks.refetch()
+      if (!refetched) return forbidden()
+      keys = (await refetched).keys
+    }
     let payload: Awaited<ReturnType<typeof Jwt.verifyWithJwks>>
     try {
       payload = await Jwt.verifyWithJwks(token, {
@@ -74,7 +120,7 @@ export function accessIdentity(options: AccessIdentityOptions) {
         verification: { iss: issuer, aud: options.aud },
       })
     } catch {
-      return c.json({ error: 'forbidden' }, 403)
+      return forbidden()
     }
     // Hono checks exp only when present; Access tokens always carry it.
     if (
@@ -82,7 +128,7 @@ export function accessIdentity(options: AccessIdentityOptions) {
       typeof payload.sub !== 'string' ||
       typeof payload.email !== 'string'
     ) {
-      return c.json({ error: 'forbidden' }, 403)
+      return forbidden()
     }
     c.set('admin', {
       admin: { id: payload.sub, email: payload.email },

@@ -1,4 +1,4 @@
-import type { Context, Env } from 'hono'
+import type { Context, Env, MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import {
   resolveTenant,
@@ -48,7 +48,9 @@ function defaultRequest(c: Context): TenancyDeps['request'] {
 // Resolves the tenant for the request (ADR-005): an explicit org wins over
 // the session's active org, and membership is re-verified by resolveTenant.
 // No session, no org, or a TenancyError responds 404.
-export function tenant<E extends Env = Env>(options: TenantOptions<E>) {
+export function tenant<E extends Env = Env>(
+  options: TenantOptions<E>,
+): MiddlewareHandler<E & { Variables: TenantVariables }> {
   return createMiddleware<E & { Variables: TenantVariables }>(
     async (c, next) => {
       const notFound = () => c.json({ error: 'not-found' }, 404)

@@ -15,7 +15,12 @@ export type {
   TenantDb,
   TenantRepository,
 } from './internal/repository'
-export { isTenantTable, tenantTable, type TenantBrand } from './internal/table'
+export {
+  isTenantTable,
+  tenantTable,
+  type TenantBrand,
+  type TenantTable,
+} from './internal/table'
 
 export const subpath = 'tenancy' as const
 

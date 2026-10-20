@@ -1,4 +1,5 @@
 import type { ErrorHandler } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import { PolicyError } from '@edgekits/kernel/policy'
 import { TenancyError } from '@edgekits/kernel/tenancy'
 
@@ -8,8 +9,9 @@ export interface ErrorsOptions {
 }
 
 // For app.onError(): PolicyError to 402 (entitlement) or 403 (forbidden)
-// with the decision, TenancyError to 404, anything else (TenantGuardError
-// included) to 500 with no detail in the body.
+// with the decision, TenancyError to 404, a Hono HTTPException to its own
+// response, anything else (TenantGuardError included) to 500 with no detail
+// in the body.
 export function errors(options: ErrorsOptions = {}): ErrorHandler {
   const log = options.log ?? console.error
   return (error, c) => {
@@ -23,6 +25,7 @@ export function errors(options: ErrorsOptions = {}): ErrorHandler {
     if (error instanceof TenancyError) {
       return c.json({ error: 'not-found' }, 404)
     }
+    if (error instanceof HTTPException) return error.getResponse()
     log(error)
     return c.json({ error: 'internal' }, 500)
   }

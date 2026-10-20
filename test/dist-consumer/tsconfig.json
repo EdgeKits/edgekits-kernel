@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": false,
+    "noEmit": true,
+    "paths": {
+      "@edgekits/kernel/*": ["../../dist/*/index.d.ts"]
+    }
+  },
+  "files": ["consumer.ts"]
+}

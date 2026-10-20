@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/d1'
 import { env } from 'cloudflare:workers'
 import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import { describe, expect, it } from 'vitest'
 import {
   errors,
@@ -191,6 +192,19 @@ describe('@edgekits/kernel/hono', () => {
       const body = await res.text()
       expect(JSON.parse(body)).toEqual({ error: 'internal' })
       expect(body).not.toMatch(/select|projects|org_id/i)
+    })
+
+    it('passes an HTTPException through with its own response', async () => {
+      const logged: unknown[] = []
+      const hono = new Hono()
+      hono.onError(errors({ log: (error) => logged.push(error) }))
+      hono.get('/auth', () => {
+        throw new HTTPException(401, { message: 'x' })
+      })
+      const res = await hono.request('/auth')
+      expect(res.status).toBe(401)
+      expect(await res.text()).toBe('x')
+      expect(logged).toEqual([])
     })
 
     it('maps a thrown TenancyError to 404 and logs only 500s', async () => {
