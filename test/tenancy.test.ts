@@ -1,9 +1,16 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
-import { integer, sqliteTable } from 'drizzle-orm/sqlite-core'
+import {
+  getTableConfig,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+} from 'drizzle-orm/sqlite-core'
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import {
+  ConflictError,
   createTenantContext,
   isTenantTable,
   resolveTenant,
@@ -14,8 +21,10 @@ import {
   type OrgRecord,
   type TenancyDeps,
   type TenantContext,
+  tenantReference,
+  tenantTable,
 } from '@edgekits/kernel/tenancy'
-import { createProjectsSql, projects } from './projects.tables'
+import { createProjectsSql, projects, tasks } from './projects.tables'
 import { seeded } from './random'
 
 const db = drizzle(env.DB, { logger: tenantGuardLogger({ mode: 'strict' }) })
@@ -50,56 +59,68 @@ describe('@edgekits/kernel/tenancy', () => {
   it('section 5 test 1: org A cannot read or change rows of org B', async () => {
     const a = contextFor('A').db.repo(projects)
     const b = contextFor('B').db.repo(projects)
-    const aIds: number[] = []
-    const bIds: number[] = []
+    // a* only in A, b* only in B, s* in both orgs under the same id (ADR-008).
+    const aIds: string[] = []
+    const bIds: string[] = []
+    const shared: string[] = []
     for (let i = 0; i < 5; i++) {
-      aIds.push((await a.insert({ name: `a${i}` })).id)
-      bIds.push((await b.insert({ name: `b${i}` })).id)
+      aIds.push((await a.insert({ id: `a${i}`, name: `a${i}` })).id)
+      bIds.push((await b.insert({ id: `b${i}`, name: `b${i}` })).id)
+      shared.push((await a.insert({ id: `s${i}`, name: `A-s${i}` })).id)
+      await b.insert({ id: `s${i}`, name: `B-s${i}` })
     }
 
-    // B's real ids, A's ids, and 100 seeded ids around and past the range.
+    // The real ids, and 100 seeded ids around and past them.
     const random = seeded(0x5eed)
     const generated = Array.from(
       { length: 100 },
-      () => Math.floor(random() * 400) - 50,
+      () =>
+        `${'abs'[Math.floor(random() * 3)]}${Math.floor(random() * 20) - 5}`,
     )
-    const ids = [...bIds, ...aIds, ...generated]
+    const ids = [...bIds, ...aIds, ...shared, ...generated]
     let checked = 0
     for (const id of ids) {
       const row = await a.findById(id)
       if (row) expect(row.orgId).toBe('A')
       if (bIds.includes(id)) expect(row).toBeNull()
+      if (shared.includes(id)) expect(row?.name).toBe(`A-${id}`)
       for (const found of await a.findMany(eq(projects.id, id))) {
         expect(found.orgId).toBe('A')
       }
       checked++
     }
-    expect(checked).toBe(110)
+    expect(checked).toBe(115)
 
     expect(await a.findMany(inArray(projects.id, bIds))).toEqual([])
     expect(await a.findMany(eq(projects.orgId, 'B'))).toEqual([])
     expect((await a.findMany()).map((r) => r.id).sort()).toEqual(
-      [...aIds].sort(),
+      [...aIds, ...shared].sort(),
     )
 
-    for (const id of bIds) {
-      expect(await a.update(id, { name: 'taken' })).toBe(0)
-      expect(await a.delete(id)).toBe(0)
+    for (const id of [...bIds, ...shared]) {
+      const expected = shared.includes(id) ? 1 : 0
+      expect(await a.update(id, { name: 'taken' })).toBe(expected)
     }
+    for (const id of bIds) expect(await a.delete(id)).toBe(0)
     expect((await b.findMany()).map((r) => r.name).sort()).toEqual([
+      'B-s0',
+      'B-s1',
+      'B-s2',
+      'B-s3',
+      'B-s4',
       'b0',
       'b1',
       'b2',
       'b3',
       'b4',
     ])
-    expect(await a.update(aIds[0] as number, { name: 'renamed' })).toBe(1)
+    expect(await a.update(aIds[0] as string, { name: 'renamed' })).toBe(1)
   })
 
   it('insert stores the context org, not an org_id in the values', async () => {
     const a = contextFor('A').db.repo(projects)
-    const values = { name: 'smuggled', orgId: 'B', org_id: 'B' }
-    const row = await a.insert(values as { name: string })
+    const values = { id: 'smuggled', name: 'smuggled', orgId: 'B', org_id: 'B' }
+    const row = await a.insert(values as { id: string; name: string })
     expect(row.orgId).toBe('A')
     const stored = await env.DB.prepare(
       'SELECT org_id FROM projects WHERE id = ?',
@@ -107,6 +128,104 @@ describe('@edgekits/kernel/tenancy', () => {
       .bind(row.id)
       .first<{ org_id: string }>()
     expect(stored?.org_id).toBe('A')
+  })
+
+  describe('ADR-008: tenant tables are keyed per tenant', () => {
+    it('emits the composite primary key (org_id, id) and makes id NOT NULL', () => {
+      const config = getTableConfig(projects)
+      expect(
+        config.primaryKeys.map((key) => key.columns.map((c) => c.name)),
+      ).toEqual([['org_id', 'id']])
+      expect(config.columns.filter((c) => c.primary)).toEqual([])
+      expect(projects.id.notNull).toBe(true)
+      expect(config.indexes.map((i) => i.config.name)).toEqual([
+        'projects_org_id_idx',
+      ])
+    })
+
+    it('refuses a caller column marked .primaryKey()', () => {
+      expect(() =>
+        tenantTable('keyed', { id: text('id').primaryKey(), name: text() }),
+      ).toThrow(/column id is marked \.primaryKey\(\).*ADR-008/)
+      expect(() =>
+        tenantTable('keyed_int', {
+          id: integer('id').primaryKey({ autoIncrement: true }),
+        }),
+      ).toThrow(/column id is marked \.primaryKey\(\)/)
+    })
+
+    it('checks a primary key declared in extra', () => {
+      const withId = tenantTable('extra_with_id', { id: text('id') }, (t) => [
+        primaryKey({ columns: [t.orgId, t.id] }),
+      ])
+      expect(() => getTableConfig(withId)).toThrow(/declares id.*ADR-008/)
+      const withoutOrg = tenantTable(
+        'extra_without_org',
+        { slug: text('slug').notNull() },
+        (t) => [primaryKey({ columns: [t.slug] })],
+      )
+      expect(() => getTableConfig(withoutOrg)).toThrow(/must include org_id/)
+      const withOrg = tenantTable(
+        'extra_with_org',
+        { slug: text('slug').notNull() },
+        (t) => [primaryKey({ columns: [t.orgId, t.slug] })],
+      )
+      expect(
+        getTableConfig(withOrg).primaryKeys[0]?.columns.map((c) => c.name),
+      ).toEqual(['org_id', 'slug'])
+    })
+
+    it('tenantReference() produces the composite foreign key', () => {
+      const [fk, ...rest] = getTableConfig(tasks).foreignKeys
+      expect(rest).toEqual([])
+      const reference = fk?.reference()
+      expect(reference?.columns.map((c) => c.name)).toEqual([
+        'org_id',
+        'project_id',
+      ])
+      expect(reference?.foreignTable).toBe(projects)
+      expect(reference?.foreignColumns.map((c) => c.name)).toEqual([
+        'org_id',
+        'id',
+      ])
+    })
+
+    it('tenantReference() refuses a column outside a tenant table', () => {
+      const plain = sqliteTable('plain_ref', { projectId: text('project_id') })
+      expect(() => tenantReference(plain.projectId, projects)).toThrow(
+        /both sides must be tenant tables/,
+      )
+    })
+
+    it('accepts the same id in two orgs', async () => {
+      const a = contextFor('A').db.repo(projects)
+      const b = contextFor('B').db.repo(projects)
+      await a.insert({ id: 'same', name: 'in A' })
+      await b.insert({ id: 'same', name: 'in B' })
+      expect((await a.findById('same'))?.name).toBe('in A')
+      expect((await b.findById('same'))?.name).toBe('in B')
+    })
+
+    it('throws ConflictError without SQL on a duplicate id in one org', async () => {
+      const a = contextFor('A').db.repo(projects)
+      await a.insert({ id: 'twice', name: 'first' })
+      const error = await a
+        .insert({ id: 'twice', name: 'second' })
+        .catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(ConflictError)
+      expect((error as ConflictError).table).toBe('projects')
+      expect((error as Error).message).not.toMatch(/insert|values|twice/i)
+      expect((await a.findById('twice'))?.name).toBe('first')
+    })
+
+    it('leaves other constraint failures alone', async () => {
+      const a = contextFor('A').db.repo(projects)
+      const error = await a
+        .insert({ id: 'nameless', name: null as unknown as string })
+        .catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(Error)
+      expect(error).not.toBeInstanceOf(ConflictError)
+    })
   })
 
   it('repo() refuses a table not declared with tenantTable()', () => {
@@ -161,7 +280,7 @@ describe('@edgekits/kernel/tenancy', () => {
         TenantGuardError,
       )
       await expect(
-        db.select().from(projects).where(eq(projects.id, 1)).all(),
+        db.select().from(projects).where(eq(projects.id, 'x')).all(),
       ).rejects.toThrow(TenantGuardError)
     })
 
@@ -177,13 +296,17 @@ describe('@edgekits/kernel/tenancy', () => {
 
     it('throws on update and delete without the predicate', async () => {
       await expect(
-        db.update(projects).set({ name: 'x' }).where(eq(projects.id, 1)).run(),
+        db
+          .update(projects)
+          .set({ name: 'x' })
+          .where(eq(projects.id, 'x'))
+          .run(),
       ).rejects.toThrow(TenantGuardError)
       await expect(db.delete(projects).run()).rejects.toThrow(TenantGuardError)
       await expect(
         db
           .delete(projects)
-          .where(and(eq(projects.orgId, 'none'), eq(projects.id, 1)))
+          .where(and(eq(projects.orgId, 'none'), eq(projects.id, 'x')))
           .run(),
       ).resolves.toBeDefined()
     })

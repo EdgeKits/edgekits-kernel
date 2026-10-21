@@ -2,11 +2,12 @@ import { drizzle } from 'drizzle-orm/d1'
 import { env } from 'cloudflare:workers'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import {
   errors,
   noStore,
   sameOrigin,
+  securityHeaders,
   subpath,
   tenant,
   type SessionInfo,
@@ -14,10 +15,13 @@ import {
 } from '@edgekits/kernel/hono'
 import { PolicyError } from '@edgekits/kernel/policy'
 import {
+  ConflictError,
+  createTenantContext,
   TenancyError,
   TenantGuardError,
   type OrgRecord,
 } from '@edgekits/kernel/tenancy'
+import { createProjectsSql, projects } from './projects.tables'
 
 const orgs: Record<string, OrgRecord> = {
   A: { id: 'A', kind: 'team', plan: 'pro', slug: 'org-a' },
@@ -97,6 +101,10 @@ function app() {
 const as = (user: string, init: RequestInit = {}) => ({
   ...init,
   headers: { Cookie: `session=${user}`, ...init.headers },
+})
+
+beforeAll(async () => {
+  for (const sql of createProjectsSql) await env.DB.prepare(sql).run()
 })
 
 describe('@edgekits/kernel/hono', () => {
@@ -207,6 +215,39 @@ describe('@edgekits/kernel/hono', () => {
       expect(logged).toEqual([])
     })
 
+    it('maps a ConflictError to 409 without detail', async () => {
+      const hono = new Hono()
+      hono.onError(errors({ log: () => {} }))
+      hono.get('/conflict', () => {
+        throw new ConflictError('projects')
+      })
+      const res = await hono.request('/conflict')
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'conflict' })
+    })
+
+    it('answers 409 when a repository insert hits the (org_id, id) key', async () => {
+      const ctx = createTenantContext({
+        orgId: 'A',
+        org: orgs.A as OrgRecord,
+        actor: { userId: 'alice', role: 'admin' },
+        request: { id: 'req', locale: 'en', source: 'session' },
+        db: drizzle(env.DB),
+      })
+      const hono = new Hono()
+      hono.onError(errors({ log: () => {} }))
+      hono.post('/projects', async (c) => {
+        const row = await ctx.db.repo(projects).insert({ id: 'p1', name: 'x' })
+        return c.json(row, 201)
+      })
+      expect((await hono.request('/projects', { method: 'POST' })).status).toBe(
+        201,
+      )
+      const again = await hono.request('/projects', { method: 'POST' })
+      expect(again.status).toBe(409)
+      expect(await again.json()).toEqual({ error: 'conflict' })
+    })
+
     it('maps a thrown TenancyError to 404 and logs only 500s', async () => {
       const logged: unknown[] = []
       const hono = new Hono()
@@ -222,6 +263,65 @@ describe('@edgekits/kernel/hono', () => {
       expect(boom.status).toBe(500)
       expect(await boom.json()).toEqual({ error: 'internal' })
       expect(logged).toHaveLength(1)
+    })
+  })
+
+  describe('securityHeaders()', () => {
+    const appWith = (
+      options?: Parameters<typeof securityHeaders>[0],
+      own?: [string, string],
+    ) => {
+      const hono = new Hono()
+      hono.use(securityHeaders(options))
+      hono.get('/', (c) => {
+        if (own) c.header(own[0], own[1])
+        return c.text('ok')
+      })
+      return hono
+    }
+
+    it('sets the five headers', async () => {
+      const res = await appWith().request('/')
+      expect(res.headers.get('Content-Security-Policy')).toBe(
+        "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      )
+      expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
+      expect(res.headers.get('Referrer-Policy')).toBe(
+        'strict-origin-when-cross-origin',
+      )
+      expect(res.headers.get('X-Frame-Options')).toBe('DENY')
+      expect(res.headers.get('Permissions-Policy')).toBe(
+        'camera=(), microphone=(), geolocation=()',
+      )
+    })
+
+    it('keeps a header the response already has', async () => {
+      const res = await appWith(undefined, [
+        'Content-Security-Policy',
+        "default-src 'none'",
+      ]).request('/')
+      expect(res.headers.get('Content-Security-Policy')).toBe(
+        "default-src 'none'",
+      )
+      expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    })
+
+    it('takes a csp and a frame-ancestors directive', async () => {
+      const custom = await appWith({
+        csp: "default-src 'self'; script-src 'self' 'sha256-abc'",
+      }).request('/')
+      expect(custom.headers.get('Content-Security-Policy')).toBe(
+        "default-src 'self'; script-src 'self' 'sha256-abc'",
+      )
+      const framed = await appWith({ frameAncestors: "'self'" }).request('/')
+      expect(framed.headers.get('Content-Security-Policy')).toBe(
+        "default-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'",
+      )
+      expect(framed.headers.get('X-Frame-Options')).toBe('SAMEORIGIN')
+      const partner = await appWith({
+        frameAncestors: 'https://partner.example',
+      }).request('/')
+      expect(partner.headers.get('X-Frame-Options')).toBeNull()
     })
   })
 

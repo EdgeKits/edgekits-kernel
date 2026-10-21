@@ -9,14 +9,16 @@ export {
   type TenancyDeps,
 } from './internal/context'
 export { TenantGuardError, tenantGuardLogger } from './internal/guard'
-export type {
-  RepositoryTable,
-  TenantDatabase,
-  TenantDb,
-  TenantRepository,
+export {
+  ConflictError,
+  type RepositoryTable,
+  type TenantDatabase,
+  type TenantDb,
+  type TenantRepository,
 } from './internal/repository'
 export {
   isTenantTable,
+  tenantReference,
   tenantTable,
   type TenantBrand,
   type TenantTable,

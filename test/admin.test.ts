@@ -184,6 +184,47 @@ describe('@edgekits/kernel/admin', () => {
     )
   })
 
+  it('treats a JWKS fetch slower than 5 s as an outage', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (_input, init) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(init.signal?.reason),
+          )
+        }),
+    )
+    const domain = 'https://slow.cloudflareaccess.com'
+    const hono = new Hono<{ Variables: AdminVariables }>()
+    hono.onError(() => new Response('outage', { status: 500 }))
+    hono.use(accessIdentity({ teamDomain: domain, aud, mode: 'production' }))
+    hono.get('/', (c) => c.text('ok'))
+    const token = await signJwt(keys.privateKey, 'k1', claims({ iss: domain }))
+    const started = Date.now()
+    const res = await hono.request('/', withToken(token))
+    expect(res.status).toBe(500)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(4_900)
+    expect(fetchSpy.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
+  }, 10_000)
+
+  it('treats a malformed JWKS as an outage and does not cache it', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(Response.json({ keys: [{ kty: 'RSA' }] }))
+      .mockResolvedValueOnce(Response.json({ nope: true }))
+      .mockImplementation(async () => Response.json(jwks))
+    const domain = 'https://malformed.cloudflareaccess.com'
+    const hono = new Hono<{ Variables: AdminVariables }>()
+    hono.onError(() => new Response('outage', { status: 500 }))
+    hono.use(accessIdentity({ teamDomain: domain, aud, mode: 'production' }))
+    hono.get('/', (c) => c.text('ok'))
+    const token = await signJwt(keys.privateKey, 'k1', claims({ iss: domain }))
+    expect((await hono.request('/', withToken(token))).status).toBe(500)
+    expect((await hono.request('/', withToken(token))).status).toBe(500)
+    expect((await hono.request('/', withToken(token))).status).toBe(200)
+    expect((await hono.request('/', withToken(token))).status).toBe(200)
+    expect(fetchSpy).toHaveBeenCalledTimes(3)
+  })
+
   it('refetches the JWKS once when a rotated key signs the token', async () => {
     const domain = 'https://rotate.cloudflareaccess.com'
     const fetchJwks = vi

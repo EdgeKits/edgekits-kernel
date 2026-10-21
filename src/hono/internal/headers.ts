@@ -41,3 +41,65 @@ export function sameOrigin({
     await next()
   })
 }
+
+export interface SecurityHeadersOptions {
+  // Replaces the whole Content-Security-Policy.
+  csp?: string
+  // Sets the frame-ancestors directive, for example "'self'".
+  frameAncestors?: string
+}
+
+const DEFAULT_CSP =
+  "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+
+// Puts frame-ancestors in place of an existing one, or appends it.
+function withFrameAncestors(csp: string, value: string): string {
+  const directive = `frame-ancestors ${value}`
+  const directives = csp
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const at = directives.findIndex((part) =>
+    part.toLowerCase().startsWith('frame-ancestors '),
+  )
+  if (at === -1) directives.push(directive)
+  else directives[at] = directive
+  return directives.join('; ')
+}
+
+// After the handler: sets each header below unless the response already has
+// it. The default CSP allows no inline script, and Astro islands hydrate
+// through inline scripts, so an Astro app passes its own csp with the
+// script-src it needs (hashes or nonces); the kernel default stays strict.
+// X-Frame-Options follows frame-ancestors for older browsers: DENY for
+// 'none', SAMEORIGIN for 'self', and absent for any other source list.
+export function securityHeaders(
+  options: SecurityHeadersOptions = {},
+): MiddlewareHandler {
+  const ancestors = options.frameAncestors
+  const csp =
+    ancestors === undefined
+      ? (options.csp ?? DEFAULT_CSP)
+      : withFrameAncestors(options.csp ?? DEFAULT_CSP, ancestors)
+  const frameOptions =
+    ancestors === undefined || ancestors === "'none'"
+      ? 'DENY'
+      : ancestors === "'self'"
+        ? 'SAMEORIGIN'
+        : undefined
+  const headers: [string, string][] = [
+    ['Content-Security-Policy', csp],
+    ['X-Content-Type-Options', 'nosniff'],
+    ['Referrer-Policy', 'strict-origin-when-cross-origin'],
+    ...(frameOptions
+      ? [['X-Frame-Options', frameOptions] as [string, string]]
+      : []),
+    ['Permissions-Policy', 'camera=(), microphone=(), geolocation=()'],
+  ]
+  return createMiddleware(async (c, next) => {
+    await next()
+    for (const [name, value] of headers) {
+      if (!c.res.headers.has(name)) c.header(name, value)
+    }
+  })
+}

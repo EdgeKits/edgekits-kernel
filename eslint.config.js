@@ -55,6 +55,11 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 // (src/**/repo.ts), the tenancy subpath, other *.tables.ts files (for
 // references between tables) and tests may import values from them; type-only
 // imports are allowed anywhere.
+// ADR-008: inside a tenantTable() call in a *.tables.ts file, a column may not
+// use .references(). Drizzle keeps a column builder's references private, so
+// tenantTable() cannot refuse them itself; references go through
+// tenantReference() (or foreignKey() for a non-tenant target) in the extra
+// config.
 const tablesModule = /\.tables(\.[cm]?[jt]s)?$/
 
 function mayImportTables(file) {
@@ -74,11 +79,21 @@ const tenantTableAccess = {
     messages: {
       tenantTable:
         "'{{source}}' exports tenant tables. Query them through a module repository (src/**/repo.ts) and TenantDb.repo().",
+      references:
+        'A tenant table column may not use .references() (ADR-008). Use tenantReference() in the extra config, or foreignKey() for a non-tenant target.',
     },
     schema: [],
   },
   create(context) {
-    if (mayImportTables(context.filename)) return {}
+    const visitors = {}
+    if (tablesModule.test(context.filename)) {
+      visitors[
+        'CallExpression[callee.name="tenantTable"] CallExpression[callee.property.name="references"]'
+      ] = (node) => {
+        context.report({ node: node.callee.property, messageId: 'references' })
+      }
+    }
+    if (mayImportTables(context.filename)) return visitors
     const check = (node) => {
       const source = node.source?.value
       if (typeof source !== 'string' || !tablesModule.test(source)) return
@@ -98,6 +113,7 @@ const tenantTableAccess = {
       })
     }
     return {
+      ...visitors,
       ImportDeclaration: check,
       ExportAllDeclaration: check,
       ExportNamedDeclaration: check,

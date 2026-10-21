@@ -1,6 +1,11 @@
 // Hono middleware: session, active org, resolveTenant, PolicyError mapping.
 export { errors, type ErrorsOptions } from './internal/errors'
-export { noStore, sameOrigin } from './internal/headers'
+export {
+  noStore,
+  sameOrigin,
+  securityHeaders,
+  type SecurityHeadersOptions,
+} from './internal/headers'
 export {
   tenant,
   type ExplicitOrg,

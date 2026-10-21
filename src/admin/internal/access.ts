@@ -16,15 +16,18 @@ export interface AccessIdentityOptions {
   mode: 'production' | 'dev'
   // Used only in mode 'dev', where the header is never read.
   devIdentity?: { id: AdminId; email: string }
-  // Loads <teamDomain>/cdn-cgi/access/certs; defaults to fetch(). The result
-  // is cached per JWKS URL for the process lifetime and refetched when a
-  // token names an unknown kid, at most once per 60 seconds per URL.
+  // Loads <teamDomain>/cdn-cgi/access/certs; defaults to fetch() with a 5 s
+  // timeout. The result must be { keys: [{ kty, kid, ... }] }; anything else
+  // counts as a failed load. It is cached per JWKS URL for the process
+  // lifetime and refetched when a token names an unknown kid, at most once
+  // per 60 seconds per URL.
   fetchJwks?: () => Promise<Jwks>
 }
 
 export type AdminVariables = { admin: AdminContext }
 
 const REFETCH_INTERVAL_MS = 60_000
+const FETCH_TIMEOUT_MS = 5_000
 
 interface JwksState {
   jwks?: Promise<Jwks>
@@ -35,12 +38,33 @@ const jwksStates = new Map<string, JwksState>()
 
 function fetchFrom(url: string): () => Promise<Jwks> {
   return async () => {
-    const response = await fetch(url)
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    })
     if (!response.ok) {
       throw new Error(`Access JWKS fetch failed: ${response.status}`)
     }
     return (await response.json()) as Jwks
   }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null
+
+// Rejects a body that is not a JWKS, so that it fails like an outage (500,
+// not cached) instead of breaking token checks later.
+function checkJwks(value: unknown): Jwks {
+  const keys = isRecord(value) ? value.keys : undefined
+  const valid =
+    Array.isArray(keys) &&
+    keys.every(
+      (key) =>
+        isRecord(key) &&
+        typeof key.kty === 'string' &&
+        typeof key.kid === 'string',
+    )
+  if (!valid) throw new Error('Access JWKS has an invalid shape')
+  return value as Jwks
 }
 
 // The cached JWKS for one URL. refetch() returns null while throttled, so a
@@ -53,9 +77,9 @@ function jwksCache(url: string, load: () => Promise<Jwks>) {
   }
   const cached = state
   const loadNow = () => {
-    const jwks = load()
+    const jwks = load().then(checkJwks)
     cached.jwks = jwks
-    // A failed fetch is not cached.
+    // A failed fetch or an invalid body is not cached.
     jwks.catch(() => {
       if (cached.jwks === jwks) cached.jwks = undefined
     })

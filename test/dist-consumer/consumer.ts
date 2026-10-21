@@ -6,13 +6,18 @@ import { toLocals } from '@edgekits/kernel/astro'
 import { accessIdentity } from '@edgekits/kernel/admin'
 import { defineSaaS } from '@edgekits/kernel/config'
 import { applySubscriptionEvents } from '@edgekits/kernel/events'
-import { errors, tenant } from '@edgekits/kernel/hono'
+import { errors, securityHeaders, tenant } from '@edgekits/kernel/hono'
 import { PolicyError } from '@edgekits/kernel/policy'
 import { paddleCapabilities } from '@edgekits/kernel/ports'
-import { tenantTable, type TenantDb } from '@edgekits/kernel/tenancy'
+import {
+  ConflictError,
+  tenantReference,
+  tenantTable,
+  type TenantDb,
+} from '@edgekits/kernel/tenancy'
 
 export const projects = tenantTable('projects', {
-  id: text().primaryKey(),
+  id: text(),
   name: text().notNull(),
 })
 
@@ -37,7 +42,10 @@ export const subpathExports = [
   defineSaaS,
   applySubscriptionEvents,
   errors,
+  securityHeaders,
   tenant,
   PolicyError,
+  ConflictError,
+  tenantReference,
   paddleCapabilities,
 ] as const
