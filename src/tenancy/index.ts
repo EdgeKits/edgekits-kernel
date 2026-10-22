@@ -1,5 +1,5 @@
 // TenantContext, resolveTenant, isolation strategies and the tenantTable() helper.
-import type { TenantDb } from './internal/repository'
+import type { TenantDb } from './internal/repository.js'
 
 export {
   createTenantContext,
@@ -7,22 +7,22 @@ export {
   TenancyError,
   type Session,
   type TenancyDeps,
-} from './internal/context'
-export { TenantGuardError, tenantGuardLogger } from './internal/guard'
+} from './internal/context.js'
+export { TenantGuardError, tenantGuardLogger } from './internal/guard.js'
 export {
   ConflictError,
   type RepositoryTable,
   type TenantDatabase,
   type TenantDb,
   type TenantRepository,
-} from './internal/repository'
+} from './internal/repository.js'
 export {
   isTenantTable,
   tenantReference,
   tenantTable,
   type TenantBrand,
   type TenantTable,
-} from './internal/table'
+} from './internal/table.js'
 
 export const subpath = 'tenancy' as const
 

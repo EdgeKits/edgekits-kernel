@@ -7,7 +7,7 @@ import type {
 } from '@edgekits/kernel/events'
 import type { OrgId, PlanId, TenantContext } from '@edgekits/kernel/tenancy'
 
-export { paddleCapabilities } from './internal/paddle-capabilities'
+export { paddleCapabilities } from './internal/paddle-capabilities.js'
 
 export const subpath = 'ports' as const
 

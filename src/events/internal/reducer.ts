@@ -1,5 +1,5 @@
 import type { PlanId } from '@edgekits/kernel/tenancy'
-import type { BillingEvent } from '../index'
+import type { BillingEvent } from '../index.js'
 
 export type SubscriptionStatus =
   | 'none'

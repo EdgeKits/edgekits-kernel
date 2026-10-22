@@ -9,8 +9,8 @@ import {
   kernelProvider,
   type EntitlementOverrideRecord,
   type SubscriptionRecord,
-} from './model'
-import { entitlementOverrides, subscriptions } from './policy.tables'
+} from './model.js'
+import { entitlementOverrides, subscriptions } from './policy.tables.js'
 
 const DAY = 24 * 60 * 60 * 1000
 

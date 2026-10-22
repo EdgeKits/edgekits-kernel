@@ -1,6 +1,6 @@
 import { integer, text } from 'drizzle-orm/sqlite-core'
 import { tenantTable } from '@edgekits/kernel/tenancy'
-import { subscriptionKinds, subscriptionStatuses } from './model'
+import { subscriptionKinds, subscriptionStatuses } from './model.js'
 
 // Written only by the billing Workflow, by AdminRpc and by the kernel trial
 // functions in repo.ts. Keyed by (org_id, id) (ADR-008). Timestamps are epoch

@@ -1,6 +1,6 @@
 import type { PlanId } from '@edgekits/kernel/tenancy'
-import type { EntitlementKey } from '../index'
-import type { EntitlementOverrideRecord, SubscriptionRecord } from './model'
+import type { EntitlementKey } from '../index.js'
+import type { EntitlementOverrideRecord, SubscriptionRecord } from './model.js'
 
 export type EntitlementValue = number | boolean
 

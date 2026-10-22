@@ -7,8 +7,8 @@ import type {
   RoleId,
   TenantContext,
   UserId,
-} from '../index'
-import { createTenantDb, type TenantDatabase } from './repository'
+} from '../index.js'
+import { createTenantDb, type TenantDatabase } from './repository.js'
 
 export function createTenantContext(input: {
   orgId: OrgId

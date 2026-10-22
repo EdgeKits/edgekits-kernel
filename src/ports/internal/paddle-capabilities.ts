@@ -1,4 +1,4 @@
-import type { BillingCapabilities } from '../index'
+import type { BillingCapabilities } from '../index.js'
 
 // Paddle Billing capability manifest, taken from developer.paddle.com
 // (2026-10-20). Where the documentation does not settle a value, the

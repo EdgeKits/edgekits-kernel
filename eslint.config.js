@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tseslint from 'typescript-eslint'
@@ -38,6 +39,50 @@ const subpathBoundary = {
           data: { source, name: path.basename(own) },
         })
       }
+    }
+    return {
+      ImportDeclaration: check,
+      ExportAllDeclaration: check,
+      ExportNamedDeclaration: check,
+      ImportExpression: check,
+    }
+  },
+}
+
+// dist/ must load in plain Node, whose ESM resolver takes a relative
+// specifier literally: every relative import or export in src/ names the
+// emitted file, './x.js' (or './dir/index.js'). The fix appends the suffix
+// that matches the source file next to the importer.
+const relativeExtension = {
+  meta: {
+    type: 'problem',
+    fixable: 'code',
+    messages: {
+      missingJs:
+        "Relative specifier '{{source}}' must end in .js so that Node resolves the emitted file.",
+    },
+    schema: [],
+  },
+  create(context) {
+    const check = (node) => {
+      const source = node.source
+      if (source?.type !== 'Literal' || typeof source.value !== 'string') return
+      const value = source.value
+      if (!value.startsWith('.') || value.endsWith('.js')) return
+      const target = path.resolve(path.dirname(context.filename), value)
+      const suffix = fs.existsSync(`${target}.ts`)
+        ? '.js'
+        : fs.existsSync(path.join(target, 'index.ts'))
+          ? '/index.js'
+          : null
+      context.report({
+        node: source,
+        messageId: 'missingJs',
+        data: { source: value },
+        fix: suffix
+          ? (fixer) => fixer.replaceText(source, `'${value}${suffix}'`)
+          : null,
+      })
     }
     return {
       ImportDeclaration: check,
@@ -129,6 +174,7 @@ const tenantTableAccess = {
 const kernel = {
   rules: {
     'subpath-boundary': subpathBoundary,
+    'relative-extension': relativeExtension,
     'tenant-table-access': tenantTableAccess,
   },
 }
@@ -141,6 +187,7 @@ export default tseslint.config(
     plugins: { kernel },
     rules: {
       'kernel/subpath-boundary': 'error',
+      'kernel/relative-extension': 'error',
       // Public functions name their return type, so the emitted declarations
       // reference named types instead of inlining library internals.
       '@typescript-eslint/explicit-module-boundary-types': 'error',

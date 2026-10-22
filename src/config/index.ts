@@ -1,14 +1,21 @@
 // defineSaaS(), provider capability validation, the env schema (defineEnv,
 // composeEnv, checkEnv, parseEnv) and the binding emitters.
 import type { z } from 'zod'
-import { blueprintSchema, type defaultRoles } from './internal/schema'
+import { blueprintSchema, type defaultRoles } from './internal/schema.js'
 
 export {
   blueprintSchema,
   defaultRoles,
   permissionSchema,
-} from './internal/schema'
-export { admin, ai, auth, billing, flags, tenancy } from './internal/factories'
+} from './internal/schema.js'
+export {
+  admin,
+  ai,
+  auth,
+  billing,
+  flags,
+  tenancy,
+} from './internal/factories.js'
 export {
   boolean,
   checkEnv,
@@ -31,12 +38,12 @@ export {
   type EnvPresence,
   type EnvShape,
   type StandardSchema,
-} from './internal/env'
+} from './internal/env.js'
 export {
   validateAgainstProviders,
   type ValidationIssue,
   type ValidationResult,
-} from './internal/validate'
+} from './internal/validate.js'
 
 export const subpath = 'config' as const
 

@@ -7,11 +7,14 @@ export {
   type EntitlementFlags,
   type PolicyBlueprint,
   type PolicyEngine,
-} from './internal/engine'
-export { PolicyError } from './internal/errors'
+} from './internal/engine.js'
+export { PolicyError } from './internal/errors.js'
 // The policy tables, for a schema package's migrations; queried only through
 // the repositories in this subpath.
-export { entitlementOverrides, subscriptions } from './internal/policy.tables'
+export {
+  entitlementOverrides,
+  subscriptions,
+} from './internal/policy.tables.js'
 export {
   kernelProvider,
   subscriptionKinds,
@@ -20,13 +23,13 @@ export {
   type SubscriptionKind,
   type SubscriptionRecord,
   type SubscriptionStatus,
-} from './internal/model'
+} from './internal/model.js'
 export {
   expireTrials,
   loadPolicyRows,
   setTrialEnd,
   startKernelTrial,
-} from './internal/repo'
+} from './internal/repo.js'
 export {
   resolveEntitlements,
   type EntitlementSource,
@@ -34,7 +37,7 @@ export {
   type Plans,
   type ResolvedEntitlements,
   type ResolveInput,
-} from './internal/resolver'
+} from './internal/resolver.js'
 
 export const subpath = 'policy' as const
 

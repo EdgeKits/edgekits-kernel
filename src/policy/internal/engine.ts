@@ -1,13 +1,13 @@
 import { defaultRoles } from '@edgekits/kernel/config'
 import type { RoleId, TenantContext } from '@edgekits/kernel/tenancy'
-import type { Decision, EntitlementKey, Permission } from '../index'
-import { PolicyError } from './errors'
-import { loadPolicyRows } from './repo'
+import type { Decision, EntitlementKey, Permission } from '../index.js'
+import { PolicyError } from './errors.js'
+import { loadPolicyRows } from './repo.js'
 import {
   resolveEntitlements,
   type Plans,
   type ResolvedEntitlements,
-} from './resolver'
+} from './resolver.js'
 
 // The live count behind a numeric entitlement, such as the org's projects.
 export type EntitlementCounter = (ctx: TenantContext) => Promise<number>

@@ -16,4 +16,4 @@ The request pipeline is plain Hono middleware from `@edgekits/kernel/hono`, used
 
 `@edgekits/kernel/admin` provides `accessIdentity()`, which verifies the Cloudflare Access JWT in `Cf-Access-Jwt-Assertion` (RS256 against the team JWKS, with `iss`, `aud` and `exp` checked) and sets `c.var.admin`, or uses a configured identity in `mode: 'dev'`.
 
-Every public function declares its return type (the lint rule `@typescript-eslint/explicit-module-boundary-types` enforces it), and `npm run typecheck` ends with `check:dist`, which builds `dist/` and type-checks its declarations from a consumer's side with `skipLibCheck` off.
+Every public function declares its return type (the lint rule `@typescript-eslint/explicit-module-boundary-types` enforces it), and `npm run typecheck` ends with `check:dist`, which builds `dist/`, type-checks its declarations from a consumer's side with `skipLibCheck` off, and imports every subpath with plain Node, no bundler. For that, every relative import in `src/` names the emitted file with a `.js` extension; the lint rule `kernel/relative-extension` enforces it.

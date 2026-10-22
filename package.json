@@ -44,7 +44,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json && npm run check:dist",
-    "check:dist": "npm run build && node test/dist-consumer/check.mjs",
+    "check:dist": "npm run build && node test/dist-consumer/check.mjs && node test/dist-consumer/import.mjs",
     "test": "vitest run",
     "lint": "eslint .",
     "format": "prettier --write .",

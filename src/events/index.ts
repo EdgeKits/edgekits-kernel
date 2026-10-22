@@ -5,7 +5,7 @@ export {
   applySubscriptionEvents,
   type SubscriptionState,
   type SubscriptionStatus,
-} from './internal/reducer'
+} from './internal/reducer.js'
 
 export const subpath = 'events' as const
 

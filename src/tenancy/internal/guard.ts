@@ -1,5 +1,5 @@
 import type { Logger } from 'drizzle-orm'
-import { tenantTableNames } from './table'
+import { tenantTableNames } from './table.js'
 
 export class TenantGuardError extends Error {
   override name = 'TenantGuardError'

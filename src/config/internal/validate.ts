@@ -1,6 +1,6 @@
 import type { z } from 'zod'
 import type { BillingCapabilities } from '@edgekits/kernel/ports'
-import type { billingSchema } from './schema'
+import type { billingSchema } from './schema.js'
 
 export interface ValidationIssue {
   path: string

@@ -2,7 +2,7 @@ import type { MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { Jwt } from 'hono/utils/jwt'
 import type { AdminId } from '@edgekits/kernel/tenancy'
-import type { AdminContext } from '../index'
+import type { AdminContext } from '../index.js'
 
 export interface Jwks {
   keys: Array<JsonWebKey & { kid?: string }>

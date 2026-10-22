@@ -28,10 +28,10 @@ import {
 import {
   entitlementOverrides,
   subscriptions,
-} from '../src/policy/internal/policy.tables'
-import { createPolicySql } from './policy-ddl'
-import { createProjectsSql, projects } from './projects.tables'
-import { seeded, shuffle } from './random'
+} from '../src/policy/internal/policy.tables.js'
+import { createPolicySql } from './policy-ddl.js'
+import { createProjectsSql, projects } from './projects.tables.js'
+import { seeded, shuffle } from './random.js'
 
 const DAY = 24 * 60 * 60 * 1000
 const NOW = 1_800_000_000_000

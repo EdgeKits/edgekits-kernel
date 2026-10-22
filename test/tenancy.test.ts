@@ -24,8 +24,8 @@ import {
   tenantReference,
   tenantTable,
 } from '@edgekits/kernel/tenancy'
-import { createProjectsSql, projects, tasks } from './projects.tables'
-import { seeded } from './random'
+import { createProjectsSql, projects, tasks } from './projects.tables.js'
+import { seeded } from './random.js'
 
 const db = drizzle(env.DB, { logger: tenantGuardLogger({ mode: 'strict' }) })
 

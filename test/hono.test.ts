@@ -21,7 +21,7 @@ import {
   TenantGuardError,
   type OrgRecord,
 } from '@edgekits/kernel/tenancy'
-import { createProjectsSql, projects } from './projects.tables'
+import { createProjectsSql, projects } from './projects.tables.js'
 
 const orgs: Record<string, OrgRecord> = {
   A: { id: 'A', kind: 'team', plan: 'pro', slug: 'org-a' },

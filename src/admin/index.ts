@@ -7,7 +7,7 @@ export {
   type AccessIdentityOptions,
   type AdminVariables,
   type Jwks,
-} from './internal/access'
+} from './internal/access.js'
 
 export const subpath = 'admin' as const
 

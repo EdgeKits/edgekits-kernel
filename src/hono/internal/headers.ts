@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
-import type { TenantVariables } from './tenant'
+import type { TenantVariables } from './tenant.js'
 
 // After the handler: an authenticated response (c.var.tenant set) gets
 // Cache-Control: no-store unless the route set its own Cache-Control.

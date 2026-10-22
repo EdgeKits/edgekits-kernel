@@ -13,8 +13,8 @@ import type {
   SQLiteTable,
   SQLiteUpdateSetSource,
 } from 'drizzle-orm/sqlite-core'
-import type { OrgId } from '../index'
-import { isTenantTable, type TenantBrand } from './table'
+import type { OrgId } from '../index.js'
+import { isTenantTable, type TenantBrand } from './table.js'
 
 // A tenant table with an id column, as tenantTable() returns it.
 export type RepositoryTable = SQLiteTable &

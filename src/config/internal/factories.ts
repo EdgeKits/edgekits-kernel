@@ -4,7 +4,7 @@ import type {
   authSchema,
   paddleBillingSchema,
   tenancySchema,
-} from './schema'
+} from './schema.js'
 
 // Each factory tags its options with a kind; defineSaaS() validates them.
 type Options<S extends z.ZodType> = Omit<z.input<S>, 'kind'>

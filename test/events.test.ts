@@ -4,7 +4,7 @@ import {
   subpath,
   type BillingEvent,
 } from '@edgekits/kernel/events'
-import { seeded, shuffle } from './random'
+import { seeded, shuffle } from './random.js'
 
 const periodEnd = Date.UTC(2026, 11, 1)
 
