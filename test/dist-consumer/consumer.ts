@@ -5,20 +5,27 @@ import { text } from 'drizzle-orm/sqlite-core'
 import { toLocals } from '@edgekits/kernel/astro'
 import { accessIdentity } from '@edgekits/kernel/admin'
 import {
+  composeEnv,
   defaultRoles,
+  defineEnv,
   defineSaaS,
+  oneOf,
+  parseEnv,
+  url,
   type Blueprint,
 } from '@edgekits/kernel/config'
 import { applySubscriptionEvents } from '@edgekits/kernel/events'
 import { errors, securityHeaders, tenant } from '@edgekits/kernel/hono'
 import {
   createPolicyEngine,
+  entitlementOverrides,
   expireTrials,
   loadPolicyRows,
   PolicyError,
   resolveEntitlements,
   setTrialEnd,
   startKernelTrial,
+  subscriptions,
   type PolicyEngine,
   type ResolvedEntitlements,
 } from '@edgekits/kernel/policy'
@@ -60,6 +67,25 @@ export const resolved: ResolvedEntitlements = resolveEntitlements({
   overrides: [],
   now: 0,
 })
+
+// The env output type survives the declaration boundary.
+const composedEnv = composeEnv([
+  defineEnv('core', {
+    MODE: oneOf(['dev', 'production']),
+    PUBLIC_SITE_URL: url().optional(),
+  }),
+])
+export const parsedEnv = parseEnv(composedEnv, {})
+export const envShape: Equal<
+  typeof parsedEnv,
+  {
+    readonly MODE: 'dev' | 'production'
+    readonly PUBLIC_SITE_URL: string | undefined
+  }
+> = true
+
+// The policy tables are exported for a consumer's migrations.
+export const policyTables = [subscriptions, entitlementOverrides] as const
 
 export const subpathExports = [
   toLocals,

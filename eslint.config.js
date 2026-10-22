@@ -52,9 +52,11 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 
 // ADR-004 layer 2. Convention: tenant tables are declared with tenantTable()
 // and exported from files named *.tables.ts. Only repositories
-// (src/**/repo.ts), the tenancy subpath, other *.tables.ts files (for
-// references between tables) and tests may import values from them; type-only
-// imports are allowed anywhere.
+// (src/**/repo.ts), the tenancy subpath, a subpath's public entry
+// (src/<name>/index.ts, which re-exports them for a consumer's migrations),
+// other *.tables.ts files (for references between tables and schema
+// packages), drizzle.config.ts files and tests may import values from them;
+// type-only imports are allowed anywhere.
 // ADR-008: inside a tenantTable() call in a *.tables.ts file, a column may not
 // use .references(). Drizzle keeps a column builder's references private, so
 // tenantTable() cannot refuse them itself; references go through
@@ -67,7 +69,9 @@ function mayImportTables(file) {
   return (
     /^src\/(.+\/)?repo\.ts$/.test(rel) ||
     rel.startsWith('src/tenancy/') ||
+    /^src\/[^/]+\/index\.ts$/.test(rel) ||
     /\.tables\.ts$/.test(rel) ||
+    /(^|\/)drizzle\.config\.ts$/.test(rel) ||
     /\.test\.ts$/.test(rel) ||
     rel.startsWith('test/')
   )

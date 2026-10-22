@@ -9,6 +9,9 @@ export {
   type PolicyEngine,
 } from './internal/engine'
 export { PolicyError } from './internal/errors'
+// The policy tables, for a schema package's migrations; queried only through
+// the repositories in this subpath.
+export { entitlementOverrides, subscriptions } from './internal/policy.tables'
 export {
   kernelProvider,
   subscriptionKinds,

@@ -1,4 +1,5 @@
-// defineSaaS(), provider capability validation and the binding and env schema emitters.
+// defineSaaS(), provider capability validation, the env schema (defineEnv,
+// composeEnv, checkEnv, parseEnv) and the binding emitters.
 import type { z } from 'zod'
 import { blueprintSchema, type defaultRoles } from './internal/schema'
 
@@ -8,6 +9,29 @@ export {
   permissionSchema,
 } from './internal/schema'
 export { admin, ai, auth, billing, flags, tenancy } from './internal/factories'
+export {
+  boolean,
+  checkEnv,
+  composeEnv,
+  defineEnv,
+  email,
+  EnvError,
+  EnvVar,
+  json,
+  number,
+  oneOf,
+  parseEnv,
+  string,
+  url,
+  type ComposedEnv,
+  type EnvCheckResult,
+  type EnvFragment,
+  type EnvIssue,
+  type EnvOutput,
+  type EnvPresence,
+  type EnvShape,
+  type StandardSchema,
+} from './internal/env'
 export {
   validateAgainstProviders,
   type ValidationIssue,
