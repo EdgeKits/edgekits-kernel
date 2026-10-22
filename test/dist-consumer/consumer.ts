@@ -29,7 +29,7 @@ import {
   type PolicyEngine,
   type ResolvedEntitlements,
 } from '@edgekits/kernel/policy'
-import { paddleCapabilities } from '@edgekits/kernel/ports'
+import { paddleCapabilities, type MailProvider } from '@edgekits/kernel/ports'
 import {
   ConflictError,
   tenantReference,
@@ -105,3 +105,8 @@ export const subpathExports = [
   tenantReference,
   paddleCapabilities,
 ] as const
+
+export const mailPort: MailProvider = {
+  id: 'dev',
+  send: async () => ({ id: 'm1' }),
+}

@@ -76,3 +76,18 @@ export interface BillingProvider {
     idempotencyKey: string,
   ): Promise<void>
 }
+
+// One outgoing message: magic links, invitations, billing notices.
+export interface MailMessage {
+  to: string
+  subject: string
+  text: string
+  html?: string
+}
+
+// A mail adapter (Cloudflare Email Service, Resend, a dev mailbox). send()
+// resolves to the provider's message id.
+export interface MailProvider {
+  readonly id: string
+  send(message: MailMessage): Promise<{ id: string }>
+}
