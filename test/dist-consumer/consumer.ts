@@ -4,10 +4,24 @@
 import { text } from 'drizzle-orm/sqlite-core'
 import { toLocals } from '@edgekits/kernel/astro'
 import { accessIdentity } from '@edgekits/kernel/admin'
-import { defineSaaS } from '@edgekits/kernel/config'
+import {
+  defaultRoles,
+  defineSaaS,
+  type Blueprint,
+} from '@edgekits/kernel/config'
 import { applySubscriptionEvents } from '@edgekits/kernel/events'
 import { errors, securityHeaders, tenant } from '@edgekits/kernel/hono'
-import { PolicyError } from '@edgekits/kernel/policy'
+import {
+  createPolicyEngine,
+  expireTrials,
+  loadPolicyRows,
+  PolicyError,
+  resolveEntitlements,
+  setTrialEnd,
+  startKernelTrial,
+  type PolicyEngine,
+  type ResolvedEntitlements,
+} from '@edgekits/kernel/policy'
 import { paddleCapabilities } from '@edgekits/kernel/ports'
 import {
   ConflictError,
@@ -36,6 +50,17 @@ type Equal<A, B> =
 export const rowShape: Equal<Row, { id: string; name: string; orgId: string }> =
   true
 
+// A parsed blueprint is what the policy engine takes.
+export const engineFor = (blueprint: Blueprint): PolicyEngine =>
+  createPolicyEngine({ blueprint })
+
+export const resolved: ResolvedEntitlements = resolveEntitlements({
+  plans: { free: { projects: 3, ai: false } },
+  subscriptions: [],
+  overrides: [],
+  now: 0,
+})
+
 export const subpathExports = [
   toLocals,
   accessIdentity,
@@ -45,6 +70,11 @@ export const subpathExports = [
   securityHeaders,
   tenant,
   PolicyError,
+  defaultRoles,
+  expireTrials,
+  loadPolicyRows,
+  setTrialEnd,
+  startKernelTrial,
   ConflictError,
   tenantReference,
   paddleCapabilities,

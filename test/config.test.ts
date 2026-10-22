@@ -126,6 +126,117 @@ describe('@edgekits/kernel/config', () => {
     expect(!result.ok && result.issues[0]?.message).toMatch(/trials/)
   })
 
+  it('parses billing.trial (days default 14) and billing.products', () => {
+    const blueprint = defineSaaS({
+      ...example(),
+      billing: billing.paddle({
+        model: 'seats',
+        currency: 'USD',
+        trial: { requiresCard: false },
+        products: {
+          pri_monthly: { plan: 'pro', kind: 'subscription' },
+          pri_lifetime: { plan: 'pro', kind: 'lifetime' },
+        },
+      }),
+    })
+    expect(blueprint.billing.trial).toEqual({ days: 14, requiresCard: false })
+    expect(blueprint.billing.trialDays).toBe(0)
+    expect(blueprint.billing.products?.pri_lifetime).toEqual({
+      plan: 'pro',
+      kind: 'lifetime',
+    })
+  })
+
+  it('rejects a product that grants a plan not in plans', () => {
+    expect(
+      issuePaths({
+        ...example(),
+        billing: billing.paddle({
+          model: 'seats',
+          currency: 'USD',
+          products: {
+            pri_ok: { plan: 'pro', kind: 'subscription' },
+            pri_gold: { plan: 'gold', kind: 'lifetime' },
+          },
+        }),
+      }),
+    ).toEqual(['billing.products.pri_gold.plan'])
+  })
+
+  it('requires trialDays and trial.days to agree when both are given', () => {
+    const withTrial = (trialDays: number, days: number) => ({
+      ...example(),
+      billing: billing.paddle({
+        model: 'seats',
+        currency: 'USD',
+        trialDays,
+        trial: { days, requiresCard: false },
+      }),
+    })
+    expect(issuePaths(withTrial(14, 14))).toEqual([])
+    try {
+      defineSaaS(withTrial(14, 7))
+      expect.unreachable()
+    } catch (error) {
+      expect(error).toBeInstanceOf(z.ZodError)
+      const issues = (error as z.ZodError).issues
+      expect(issues.map((issue) => issue.path.join('.'))).toEqual([
+        'billing.trialDays',
+      ])
+      expect(issues[0]?.message).toMatch(/trialDays \(14\).*trial\.days \(7\)/)
+    }
+    expect(issuePaths(withTrial(0, 7))).toEqual(['billing.trialDays'])
+    expect(
+      issuePaths({
+        ...example(),
+        billing: billing.paddle({
+          model: 'seats',
+          currency: 'USD',
+          trial: { days: 0, requiresCard: false },
+        }),
+      }),
+    ).toEqual(['billing.trial.days'])
+  })
+
+  it('allows a card-free kernel trial with any provider', () => {
+    const blueprint = defineSaaS({
+      ...example(),
+      billing: billing.paddle({
+        model: 'seats',
+        currency: 'USD',
+        trialDays: 14,
+        trial: { days: 14, requiresCard: false },
+      }),
+    })
+    expect(
+      validateAgainstProviders(blueprint, {
+        ...paddleCapabilities,
+        trials: false,
+      }),
+    ).toEqual({ ok: true })
+  })
+
+  it('rejects a trial that requires a card when the provider has no trials', () => {
+    const blueprint = defineSaaS({
+      ...example(),
+      billing: billing.paddle({
+        model: 'seats',
+        currency: 'USD',
+        trial: { requiresCard: true },
+      }),
+    })
+    expect(validateAgainstProviders(blueprint, paddleCapabilities)).toEqual({
+      ok: true,
+    })
+    const result = validateAgainstProviders(blueprint, {
+      ...paddleCapabilities,
+      trials: false,
+    })
+    expect(!result.ok && result.issues.map((i) => i.path)).toEqual([
+      'billing.trial.requiresCard',
+    ])
+  })
+
   it('rejects a plan entitlement that is a string', () => {
     const input = example()
     expect(

@@ -1,6 +1,38 @@
 // Permissions, entitlements and the PolicyEngine with its Decision and PolicyError types.
 import type { PlanId } from '@edgekits/kernel/tenancy'
 
+export {
+  createPolicyEngine,
+  type EntitlementCounter,
+  type EntitlementFlags,
+  type PolicyBlueprint,
+  type PolicyEngine,
+} from './internal/engine'
+export { PolicyError } from './internal/errors'
+export {
+  kernelProvider,
+  subscriptionKinds,
+  subscriptionStatuses,
+  type EntitlementOverrideRecord,
+  type SubscriptionKind,
+  type SubscriptionRecord,
+  type SubscriptionStatus,
+} from './internal/model'
+export {
+  expireTrials,
+  loadPolicyRows,
+  setTrialEnd,
+  startKernelTrial,
+} from './internal/repo'
+export {
+  resolveEntitlements,
+  type EntitlementSource,
+  type EntitlementValue,
+  type Plans,
+  type ResolvedEntitlements,
+  type ResolveInput,
+} from './internal/resolver'
+
 export const subpath = 'policy' as const
 
 export type Permission = `${string}.${string}` | '*' | `${string}.*`
@@ -18,14 +50,3 @@ export type Decision =
       current: number
       upgradeTo?: PlanId
     }
-
-// Thrown by helpers; mapped by /hono and /astro to 403 or 402 with a structured body.
-export class PolicyError extends Error {
-  override name = 'PolicyError'
-  decision: Exclude<Decision, { ok: true }>
-
-  constructor(decision: Exclude<Decision, { ok: true }>) {
-    super(`Policy denied: ${decision.reason}`)
-    this.decision = decision
-  }
-}

@@ -2,7 +2,11 @@
 import type { z } from 'zod'
 import { blueprintSchema, type defaultRoles } from './internal/schema'
 
-export { blueprintSchema, permissionSchema } from './internal/schema'
+export {
+  blueprintSchema,
+  defaultRoles,
+  permissionSchema,
+} from './internal/schema'
 export { admin, ai, auth, billing, flags, tenancy } from './internal/factories'
 export {
   validateAgainstProviders,
