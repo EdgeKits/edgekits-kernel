@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { errors } from '@edgekits/kernel/hono'
 import {
+  applyProviderSubscription,
   createPolicyEngine,
   expireTrials,
   loadPolicyRows,
@@ -15,6 +16,7 @@ import {
   type EntitlementOverrideRecord,
   type Plans,
   type PolicyBlueprint,
+  type ProviderSubscriptionRecord,
   type ResolveInput,
   type SubscriptionRecord,
 } from '@edgekits/kernel/policy'
@@ -591,6 +593,128 @@ describe('kernel trials', () => {
     expect(await status(providerTrial)).toBe('trialing')
     expect(await status(active)).toBe('active')
     expect(await expireTrials(unguarded, 1000)).toBe(0)
+  })
+})
+
+describe('applyProviderSubscription', () => {
+  const record = (
+    more: Partial<ProviderSubscriptionRecord> = {},
+  ): ProviderSubscriptionRecord => ({
+    provider: 'paddle',
+    providerSubscriptionId: 'sub_01',
+    kind: 'subscription',
+    plan: 'pro',
+    status: 'active',
+    seats: 1,
+    periodEnd: NOW + 30 * DAY,
+    trialEndsAt: null,
+    updatedAt: NOW,
+    ...more,
+  })
+  const rows = async (ctx: TenantContext) =>
+    (await loadPolicyRows(ctx)).subscriptions
+
+  it('inserts the row keyed by provider and subscription id', async () => {
+    const ctx = contextFor(freshOrg())
+    expect(
+      await applyProviderSubscription(unguarded, ctx.orgId, record()),
+    ).toBe(true)
+    expect(await rows(ctx)).toEqual([
+      {
+        id: 'paddle:sub_01',
+        orgId: ctx.orgId,
+        kind: 'subscription',
+        plan: 'pro',
+        status: 'active',
+        seats: 1,
+        periodEnd: NOW + 30 * DAY,
+        trialEndsAt: null,
+        credits: 0,
+        provider: 'paddle',
+        providerSubscriptionId: 'sub_01',
+        updatedAt: NOW,
+      },
+    ])
+  })
+
+  it('updates the row from a newer record and keeps credits', async () => {
+    const ctx = contextFor(freshOrg())
+    await applyProviderSubscription(unguarded, ctx.orgId, record())
+    await ctx.db.repo(subscriptions).update('paddle:sub_01', { credits: 7 })
+    expect(
+      await applyProviderSubscription(
+        unguarded,
+        ctx.orgId,
+        record({ seats: 3, status: 'canceled', updatedAt: NOW + 1 }),
+      ),
+    ).toBe(true)
+    const [row] = await rows(ctx)
+    expect(row).toMatchObject({
+      seats: 3,
+      status: 'canceled',
+      credits: 7,
+      updatedAt: NOW + 1,
+    })
+  })
+
+  it('ignores a record older than the row', async () => {
+    const ctx = contextFor(freshOrg())
+    await applyProviderSubscription(
+      unguarded,
+      ctx.orgId,
+      record({ status: 'canceled', updatedAt: NOW + 10 }),
+    )
+    expect(
+      await applyProviderSubscription(
+        unguarded,
+        ctx.orgId,
+        record({ status: 'active', updatedAt: NOW }),
+      ),
+    ).toBe(false)
+    expect((await rows(ctx))[0]?.status).toBe('canceled')
+  })
+
+  it('keeps two orgs with the same provider subscription id apart', async () => {
+    const a = contextFor(freshOrg())
+    const b = contextFor(freshOrg())
+    await applyProviderSubscription(unguarded, a.orgId, record({ seats: 2 }))
+    await applyProviderSubscription(
+      unguarded,
+      b.orgId,
+      record({ seats: 5, updatedAt: NOW + 1 }),
+    )
+    expect((await rows(a)).map((r) => r.seats)).toEqual([2])
+    expect((await rows(b)).map((r) => r.seats)).toEqual([5])
+  })
+
+  it('leaves the kernel trial row untouched', async () => {
+    const ctx = contextFor(freshOrg())
+    const trial = await startKernelTrial(ctx, { plan: 'pro', days: 14 })
+    await applyProviderSubscription(unguarded, ctx.orgId, record())
+    const all = await rows(ctx)
+    expect(all.find((r) => r.id === 'kernel-trial')).toEqual(trial)
+    expect(all.map((r) => r.id).sort()).toEqual([
+      'kernel-trial',
+      'paddle:sub_01',
+    ])
+  })
+
+  it('refuses the kernel provider id', async () => {
+    const ctx = contextFor(freshOrg())
+    await startKernelTrial(ctx, { plan: 'pro', days: 14 })
+    await expect(
+      applyProviderSubscription(
+        unguarded,
+        ctx.orgId,
+        record({ provider: 'kernel', providerSubscriptionId: 'trial' }),
+      ),
+    ).rejects.toThrow(RangeError)
+    expect((await rows(ctx)).map((r) => r.id)).toEqual(['kernel-trial'])
+  })
+
+  it('runs under the strict guard too, since it sets org_id itself', async () => {
+    const ctx = contextFor(freshOrg())
+    expect(await applyProviderSubscription(db, ctx.orgId, record())).toBe(true)
   })
 })
 

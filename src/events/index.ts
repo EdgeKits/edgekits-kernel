@@ -65,3 +65,15 @@ export interface InboundEvent<T = unknown> {
   // Kept for audit; never used for decisions under api_callback.
   raw: T
 }
+
+// Where applied billing events go after the billing Workflow has written the
+// subscription: the audit log (P1-09) is the first subscriber. publish() is
+// called from a Workflow step, so it may run more than once for one event.
+export interface EventBus {
+  publish(orgId: OrgId, event: BillingEvent): Promise<void>
+}
+
+// A bus without subscribers.
+export const noopEventBus: EventBus = {
+  publish: async () => {},
+}

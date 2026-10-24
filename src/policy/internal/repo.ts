@@ -1,6 +1,7 @@
 import { and, eq, isNotNull, lte } from 'drizzle-orm'
 import {
   ConflictError,
+  type OrgId,
   type PlanId,
   type TenantContext,
   type TenantDatabase,
@@ -8,6 +9,7 @@ import {
 import {
   kernelProvider,
   type EntitlementOverrideRecord,
+  type ProviderSubscriptionRecord,
   type SubscriptionRecord,
 } from './model.js'
 import { entitlementOverrides, subscriptions } from './policy.tables.js'
@@ -97,4 +99,58 @@ export async function expireTrials(
     )
     .run()
   return result.meta.changes
+}
+
+// For the billing Workflow: inserts or updates the org's row for one provider
+// subscription, keyed (org_id, '<provider>:<providerSubscriptionId>'). The
+// org comes from the caller, never from the record. An existing row changes
+// only when it belongs to the same provider and the record is not older than
+// it (updatedAt), so a late Workflow cannot roll a subscription back and the
+// kernel's trial rows are never touched. Resolves to true when a row was
+// written. One INSERT statement that sets org_id itself, so it runs on a
+// guarded or an unguarded database handle alike.
+export async function applyProviderSubscription(
+  db: TenantDatabase,
+  orgId: OrgId,
+  record: ProviderSubscriptionRecord,
+): Promise<boolean> {
+  const { provider, providerSubscriptionId } = record
+  if (provider === kernelProvider || provider === '') {
+    throw new RangeError(
+      `applyProviderSubscription: '${provider}' is not a billing provider id`,
+    )
+  }
+  if (providerSubscriptionId === '') {
+    throw new RangeError(
+      'applyProviderSubscription: providerSubscriptionId is empty',
+    )
+  }
+  const values = {
+    kind: record.kind,
+    plan: record.plan,
+    status: record.status,
+    seats: record.seats,
+    periodEnd: record.periodEnd,
+    trialEndsAt: record.trialEndsAt,
+    updatedAt: record.updatedAt,
+  }
+  const result = await db
+    .insert(subscriptions)
+    .values({
+      ...values,
+      id: `${provider}:${providerSubscriptionId}`,
+      orgId,
+      provider,
+      providerSubscriptionId,
+    })
+    .onConflictDoUpdate({
+      target: [subscriptions.orgId, subscriptions.id],
+      set: values,
+      setWhere: and(
+        eq(subscriptions.provider, provider),
+        lte(subscriptions.updatedAt, record.updatedAt),
+      ),
+    })
+    .run()
+  return result.meta.changes === 1
 }

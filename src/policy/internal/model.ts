@@ -34,6 +34,22 @@ export interface SubscriptionRecord {
   updatedAt: number
 }
 
+// A provider's subscription as the billing Workflow writes it, after it has
+// re-fetched the subscription from the provider (ADR-007). updatedAt is the
+// provider's own last-change time, so an older fetch never overwrites a newer
+// one. Timestamps are epoch milliseconds.
+export interface ProviderSubscriptionRecord {
+  provider: string
+  providerSubscriptionId: string
+  kind: SubscriptionKind
+  plan: PlanId
+  status: SubscriptionStatus
+  seats: number
+  periodEnd: number | null
+  trialEndsAt: number | null
+  updatedAt: number
+}
+
 // One override per entitlement key and org (ADR-006): id is the key.
 export interface EntitlementOverrideRecord {
   id: string

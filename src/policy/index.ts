@@ -20,11 +20,13 @@ export {
   subscriptionKinds,
   subscriptionStatuses,
   type EntitlementOverrideRecord,
+  type ProviderSubscriptionRecord,
   type SubscriptionKind,
   type SubscriptionRecord,
   type SubscriptionStatus,
 } from './internal/model.js'
 export {
+  applyProviderSubscription,
   expireTrials,
   loadPolicyRows,
   setTrialEnd,

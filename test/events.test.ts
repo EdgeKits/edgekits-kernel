@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   applySubscriptionEvents,
+  noopEventBus,
   subpath,
   type BillingEvent,
+  type EventBus,
 } from '@edgekits/kernel/events'
 import { seeded, shuffle } from './random.js'
 
@@ -127,5 +129,26 @@ describe('@edgekits/kernel/events', () => {
     const copy = structuredClone(fixture)
     applySubscriptionEvents(fixture)
     expect(fixture).toEqual(copy)
+  })
+})
+
+describe('EventBus', () => {
+  it('noopEventBus accepts any event and resolves', async () => {
+    const event = fixture[1] as BillingEvent
+    await expect(noopEventBus.publish('A', event)).resolves.toBeUndefined()
+  })
+
+  it('a subscriber receives the org and the event', async () => {
+    const seen: Array<[string, string]> = []
+    const bus: EventBus = {
+      publish: async (orgId, event) => {
+        seen.push([orgId, event.type])
+      },
+    }
+    for (const event of fixture.slice(0, 2)) await bus.publish('A', event)
+    expect(seen).toEqual([
+      ['A', 'customer.linked'],
+      ['A', 'subscription.activated'],
+    ])
   })
 })

@@ -14,9 +14,14 @@ import {
   url,
   type Blueprint,
 } from '@edgekits/kernel/config'
-import { applySubscriptionEvents } from '@edgekits/kernel/events'
+import {
+  applySubscriptionEvents,
+  noopEventBus,
+  type EventBus,
+} from '@edgekits/kernel/events'
 import { errors, securityHeaders, tenant } from '@edgekits/kernel/hono'
 import {
+  applyProviderSubscription,
   createPolicyEngine,
   entitlementOverrides,
   expireTrials,
@@ -97,6 +102,7 @@ export const subpathExports = [
   tenant,
   PolicyError,
   defaultRoles,
+  applyProviderSubscription,
   expireTrials,
   loadPolicyRows,
   setTrialEnd,
@@ -110,3 +116,5 @@ export const mailPort: MailProvider = {
   id: 'dev',
   send: async () => ({ id: 'm1' }),
 }
+
+export const eventBus: EventBus = noopEventBus
