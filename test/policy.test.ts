@@ -263,7 +263,7 @@ const freshOrg = () => `org-${++orgCount}-${crypto.randomUUID().slice(0, 8)}`
 const contextFor = (orgId: string, role = 'owner'): TenantContext =>
   createTenantContext({
     orgId,
-    org: { id: orgId, kind: 'team', plan: 'free', slug: orgId },
+    org: { id: orgId, kind: 'team', slug: orgId },
     actor: { userId: `user-${orgId}`, role },
     request: { id: `req-${orgId}`, locale: 'en', source: 'explicit' },
     db,

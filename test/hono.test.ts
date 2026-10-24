@@ -24,8 +24,8 @@ import {
 import { createProjectsSql, projects } from './projects.tables.js'
 
 const orgs: Record<string, OrgRecord> = {
-  A: { id: 'A', kind: 'team', plan: 'pro', slug: 'org-a' },
-  B: { id: 'B', kind: 'team', plan: 'free', slug: 'org-b' },
+  A: { id: 'A', kind: 'team', slug: 'org-a' },
+  B: { id: 'B', kind: 'team', slug: 'org-b' },
 }
 const members = new Map([
   ['A:alice', 'admin'],

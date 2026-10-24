@@ -39,6 +39,7 @@ import {
   ConflictError,
   tenantReference,
   tenantTable,
+  type OrgRecord,
   type TenantDb,
 } from '@edgekits/kernel/tenancy'
 
@@ -61,6 +62,13 @@ type Equal<A, B> =
 // the declared columns plus org_id, not any and not a widened shape.
 export const rowShape: Equal<Row, { id: string; name: string; orgId: string }> =
   true
+
+// An org record carries no plan: the policy engine resolves the plan from the
+// org's subscriptions rows.
+export const orgShape: Equal<
+  OrgRecord,
+  { id: string; kind: 'personal' | 'team'; slug: string }
+> = true
 
 // A parsed blueprint is what the policy engine takes.
 export const engineFor = (blueprint: Blueprint): PolicyEngine =>

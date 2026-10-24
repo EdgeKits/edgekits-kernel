@@ -39,7 +39,6 @@ export type OrgSource = 'session' | 'api-key' | 'explicit'
 export interface OrgRecord {
   id: OrgId
   kind: 'personal' | 'team'
-  plan: PlanId
   slug: string
 }
 
