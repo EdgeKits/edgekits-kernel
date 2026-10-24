@@ -13,6 +13,9 @@ export const subscriptions = tenantTable('subscriptions', {
   seats: integer('seats').notNull().default(1),
   periodEnd: integer('period_end'),
   trialEndsAt: integer('trial_ends_at'),
+  // When a scheduled cancellation ends the subscription; null when none is
+  // scheduled. The status stays as it is until the provider ends it.
+  cancelAt: integer('cancel_at'),
   credits: integer('credits').notNull().default(0),
   // 'kernel' for a trial the kernel runs; otherwise the billing provider id.
   provider: text('provider'),

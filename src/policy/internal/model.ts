@@ -28,6 +28,8 @@ export interface SubscriptionRecord {
   seats: number
   periodEnd: number | null
   trialEndsAt: number | null
+  // A scheduled cancellation's effective time, or null.
+  cancelAt: number | null
   credits: number
   provider: string | null
   providerSubscriptionId: string | null
@@ -47,6 +49,9 @@ export interface ProviderSubscriptionRecord {
   seats: number
   periodEnd: number | null
   trialEndsAt: number | null
+  // The scheduled cancellation's effective time; null clears one that was
+  // removed.
+  cancelAt: number | null
   updatedAt: number
 }
 

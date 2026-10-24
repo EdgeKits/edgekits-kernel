@@ -608,6 +608,7 @@ describe('applyProviderSubscription', () => {
     seats: 1,
     periodEnd: NOW + 30 * DAY,
     trialEndsAt: null,
+    cancelAt: null,
     updatedAt: NOW,
     ...more,
   })
@@ -629,6 +630,7 @@ describe('applyProviderSubscription', () => {
         seats: 1,
         periodEnd: NOW + 30 * DAY,
         trialEndsAt: null,
+        cancelAt: null,
         credits: 0,
         provider: 'paddle',
         providerSubscriptionId: 'sub_01',
@@ -655,6 +657,39 @@ describe('applyProviderSubscription', () => {
       credits: 7,
       updatedAt: NOW + 1,
     })
+  })
+
+  it('sets cancelAt from a scheduled cancellation, status unchanged', async () => {
+    const ctx = contextFor(freshOrg())
+    await applyProviderSubscription(unguarded, ctx.orgId, record())
+    expect(
+      await applyProviderSubscription(
+        unguarded,
+        ctx.orgId,
+        record({ cancelAt: NOW + 30 * DAY, updatedAt: NOW + 1 }),
+      ),
+    ).toBe(true)
+    expect((await rows(ctx))[0]).toMatchObject({
+      status: 'active',
+      cancelAt: NOW + 30 * DAY,
+    })
+  })
+
+  it('clears cancelAt when the scheduled cancellation is removed', async () => {
+    const ctx = contextFor(freshOrg())
+    await applyProviderSubscription(
+      unguarded,
+      ctx.orgId,
+      record({ cancelAt: NOW + 30 * DAY }),
+    )
+    expect(
+      await applyProviderSubscription(
+        unguarded,
+        ctx.orgId,
+        record({ cancelAt: null, updatedAt: NOW + 1 }),
+      ),
+    ).toBe(true)
+    expect((await rows(ctx))[0]?.cancelAt).toBeNull()
   })
 
   it('ignores a record older than the row', async () => {

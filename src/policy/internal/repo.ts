@@ -132,6 +132,7 @@ export async function applyProviderSubscription(
     seats: record.seats,
     periodEnd: record.periodEnd,
     trialEndsAt: record.trialEndsAt,
+    cancelAt: record.cancelAt,
     updatedAt: record.updatedAt,
   }
   const result = await db
