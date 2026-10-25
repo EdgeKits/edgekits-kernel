@@ -5,16 +5,45 @@ export {
   createPolicyEngine,
   type EntitlementCounter,
   type EntitlementFlags,
-  type PolicyBlueprint,
   type PolicyEngine,
+  type PolicyEngineOptions,
 } from './internal/engine.js'
 export { PolicyError } from './internal/errors.js'
 // The policy tables, for a schema package's migrations; queried only through
 // the repositories in this subpath.
 export {
   entitlementOverrides,
+  planPrices,
+  plans,
   subscriptions,
 } from './internal/policy.tables.js'
+// The plan catalog (ADR-010): written only by AdminRpc and the seed.
+export {
+  addPrice,
+  archivePlan,
+  archivePrice,
+  createPlan,
+  getPlan,
+  listPlans,
+  loadPlanCatalog,
+  planEntitlementIssues,
+  PlanError,
+  planForPrice,
+  planSource,
+  priceForPlan,
+  setDefaultPlan,
+  updatePlan,
+  type EntitlementKind,
+  type EntitlementVocabulary,
+  type NewPlan,
+  type NewPlanPrice,
+  type PlanCatalog,
+  type PlanPatch,
+  type PlanPriceRecord,
+  type PlanRecord,
+  type PlanSource,
+  type PlanTrial,
+} from './internal/plans/repo.js'
 export {
   kernelProvider,
   subscriptionKinds,

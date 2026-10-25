@@ -13,7 +13,8 @@ import {
 } from '@edgekits/kernel/config'
 import { paddleCapabilities } from '@edgekits/kernel/ports'
 
-// The blueprint example from docs/blueprint-and-ports-v0.md section 1.
+// The blueprint example from docs/blueprint-and-ports-v0.md section 1, with
+// the entitlement vocabulary of ADR-010 in place of plans.
 const example = () => ({
   name: 'acme',
   locales: ['en', 'de', 'ja'],
@@ -36,14 +37,17 @@ const example = () => ({
     viewer: ['project.read'],
   },
 
-  plans: {
-    free: { seats: 1, projects: 3, ai: false, storageGb: 1 },
-    pro: { seats: 10, projects: -1, ai: true, storageGb: 50 },
+  // Plans are rows of the kernel's plans table (ADR-010); the blueprint
+  // names the entitlement keys and their kinds.
+  entitlements: {
+    seats: { kind: 'limit' as const },
+    projects: { kind: 'limit' as const },
+    ai: { kind: 'switch' as const },
+    storage_gb: { kind: 'limit' as const },
   },
 
   billing: billing.paddle({
     model: 'seats',
-    trialDays: 14,
     currency: 'USD',
   }),
 
@@ -81,9 +85,9 @@ describe('@edgekits/kernel/config', () => {
     expect(blueprint.billing).toEqual({
       kind: 'paddle',
       model: 'seats',
-      trialDays: 14,
       currency: 'USD',
     })
+    expect(blueprint.entitlements.ai).toEqual({ kind: 'switch' })
     expect(blueprint.roles.viewer).toEqual(['project.read'])
     expect(validateAgainstProviders(blueprint, paddleCapabilities)).toEqual({
       ok: true,
@@ -114,145 +118,62 @@ describe('@edgekits/kernel/config', () => {
     ])
   })
 
-  it('fails validation for a trial when the provider has no trials', () => {
-    const blueprint = defineSaaS(example())
-    const result = validateAgainstProviders(blueprint, {
-      ...paddleCapabilities,
-      trials: false,
-    })
-    expect(!result.ok && result.issues.map((i) => i.path)).toEqual([
-      'billing.trialDays',
-    ])
-    expect(!result.ok && result.issues[0]?.message).toMatch(/trials/)
-  })
-
-  it('parses billing.trial (days default 14) and billing.products', () => {
-    const blueprint = defineSaaS({
-      ...example(),
-      billing: billing.paddle({
-        model: 'seats',
-        currency: 'USD',
-        trial: { requiresCard: false },
-        products: {
-          pri_monthly: { plan: 'pro', kind: 'subscription' },
-          pri_lifetime: { plan: 'pro', kind: 'lifetime' },
-        },
-      }),
-    })
-    expect(blueprint.billing.trial).toEqual({ days: 14, requiresCard: false })
-    expect(blueprint.billing.trialDays).toBe(0)
-    expect(blueprint.billing.products?.pri_lifetime).toEqual({
-      plan: 'pro',
-      kind: 'lifetime',
-    })
-  })
-
-  it('rejects a product that grants a plan not in plans', () => {
-    expect(
-      issuePaths({
-        ...example(),
-        billing: billing.paddle({
-          model: 'seats',
-          currency: 'USD',
-          products: {
-            pri_ok: { plan: 'pro', kind: 'subscription' },
-            pri_gold: { plan: 'gold', kind: 'lifetime' },
-          },
-        }),
-      }),
-    ).toEqual(['billing.products.pri_gold.plan'])
-  })
-
-  it('requires trialDays and trial.days to agree when both are given', () => {
-    const withTrial = (trialDays: number, days: number) => ({
-      ...example(),
-      billing: billing.paddle({
-        model: 'seats',
-        currency: 'USD',
-        trialDays,
-        trial: { days, requiresCard: false },
-      }),
-    })
-    expect(issuePaths(withTrial(14, 14))).toEqual([])
-    try {
-      defineSaaS(withTrial(14, 7))
-      expect.unreachable()
-    } catch (error) {
-      expect(error).toBeInstanceOf(z.ZodError)
-      const issues = (error as z.ZodError).issues
-      expect(issues.map((issue) => issue.path.join('.'))).toEqual([
-        'billing.trialDays',
-      ])
-      expect(issues[0]?.message).toMatch(/trialDays \(14\).*trial\.days \(7\)/)
-    }
-    expect(issuePaths(withTrial(0, 7))).toEqual(['billing.trialDays'])
-    expect(
-      issuePaths({
-        ...example(),
-        billing: billing.paddle({
-          model: 'seats',
-          currency: 'USD',
-          trial: { days: 0, requiresCard: false },
-        }),
-      }),
-    ).toEqual(['billing.trial.days'])
-  })
-
-  it('allows a card-free kernel trial with any provider', () => {
-    const blueprint = defineSaaS({
-      ...example(),
-      billing: billing.paddle({
-        model: 'seats',
-        currency: 'USD',
-        trialDays: 14,
-        trial: { days: 14, requiresCard: false },
-      }),
-    })
-    expect(
-      validateAgainstProviders(blueprint, {
-        ...paddleCapabilities,
-        trials: false,
-      }),
-    ).toEqual({ ok: true })
-  })
-
-  it('rejects a trial that requires a card when the provider has no trials', () => {
-    const blueprint = defineSaaS({
-      ...example(),
-      billing: billing.paddle({
-        model: 'seats',
-        currency: 'USD',
-        trial: { requiresCard: true },
-      }),
-    })
-    expect(validateAgainstProviders(blueprint, paddleCapabilities)).toEqual({
-      ok: true,
-    })
-    const result = validateAgainstProviders(blueprint, {
-      ...paddleCapabilities,
-      trials: false,
-    })
-    expect(!result.ok && result.issues.map((i) => i.path)).toEqual([
-      'billing.trial.requiresCard',
-    ])
-  })
-
-  it('rejects a plan entitlement that is a string', () => {
+  it('takes no plans, trial or product settings any more', () => {
     const input = example()
+    expect(
+      issuePaths({ ...input, plans: { free: { seats: 1 } } } as never),
+    ).toEqual([''])
     expect(
       issuePaths({
         ...input,
-        plans: {
-          ...input.plans,
-          free: { ...input.plans.free, seats: 'one' as unknown as number },
-        },
+        billing: { ...input.billing, trialDays: 14 },
+      } as never),
+    ).toEqual(['billing'])
+    expect(
+      issuePaths({
+        ...input,
+        billing: { ...input.billing, trial: { requiresCard: false } },
+      } as never),
+    ).toEqual(['billing'])
+    expect(
+      issuePaths({
+        ...input,
+        billing: { ...input.billing, products: {} },
+      } as never),
+    ).toEqual(['billing'])
+  })
+
+  it('validates the entitlement vocabulary', () => {
+    const input = example()
+    expect(issuePaths({ ...input, entitlements: {} })).toEqual(['entitlements'])
+    expect(
+      issuePaths({ ...input, entitlements: { storageGb: { kind: 'limit' } } }),
+    ).toEqual(['entitlements.storageGb'])
+    expect(
+      issuePaths({
+        ...input,
+        entitlements: { 'members.max': { kind: 'limit' } },
       }),
-    ).toEqual(['plans.free.seats'])
+    ).toEqual(['entitlements.members.max'])
+    expect(
+      issuePaths({
+        ...input,
+        entitlements: { members: { kind: 'number' as 'limit' } },
+      }),
+    ).toEqual(['entitlements.members.kind'])
+    expect(
+      issuePaths({
+        ...input,
+        entitlements: { members: { kind: 'limit', max: 3 } as never },
+      }),
+    ).toEqual(['entitlements.members'])
+    expect(issuePaths({ ...input, entitlements: undefined } as never)).toEqual([
+      'entitlements',
+    ])
   })
 
   it('rejects malformed roles, locales, modules and billing fields', () => {
     const input = example()
-    expect(issuePaths({ ...input, plans: {} })).toEqual(['plans'])
     expect(issuePaths({ ...input, roles: { viewer: ['project'] } })).toEqual([
       'roles.viewer.0',
     ])
@@ -273,10 +194,10 @@ describe('@edgekits/kernel/config', () => {
         billing: billing.paddle({
           model: 'seats',
           currency: 'USD',
-          trialDays: 1.5,
+          proration: 'later' as 'none',
         }),
       }),
-    ).toEqual(['billing.trialDays'])
+    ).toEqual(['billing.proration'])
   })
 
   it('provides the default roles and lets the blueprint override them', () => {
@@ -291,12 +212,18 @@ describe('@edgekits/kernel/config', () => {
     ])
   })
 
-  it('keeps plan keys and the billing provider tag in the type', () => {
-    const blueprint = defineSaaS(example())
-    expectTypeOf<keyof typeof blueprint.plans>().toEqualTypeOf<'free' | 'pro'>()
-    expectTypeOf<keyof typeof blueprint.plans.pro>().toEqualTypeOf<
-      'seats' | 'projects' | 'ai' | 'storageGb'
+  it('keeps entitlement keys and kinds and the billing provider tag in the type', () => {
+    const blueprint = defineSaaS({
+      ...example(),
+      entitlements: {
+        seats: { kind: 'limit' as const },
+        ai: { kind: 'switch' as const },
+      },
+    })
+    expectTypeOf<keyof typeof blueprint.entitlements>().toEqualTypeOf<
+      'seats' | 'ai'
     >()
+    expectTypeOf(blueprint.entitlements.ai.kind).toEqualTypeOf<'switch'>()
     expectTypeOf(blueprint.billing.kind).toEqualTypeOf<'paddle'>()
   })
 })

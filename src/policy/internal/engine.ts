@@ -2,21 +2,22 @@ import { defaultRoles } from '@edgekits/kernel/config'
 import type { RoleId, TenantContext } from '@edgekits/kernel/tenancy'
 import type { Decision, EntitlementKey, Permission } from '../index.js'
 import { PolicyError } from './errors.js'
+import type { EntitlementVocabulary, PlanSource } from './plans/repo.js'
 import { loadPolicyRows } from './repo.js'
-import {
-  resolveEntitlements,
-  type Plans,
-  type ResolvedEntitlements,
-} from './resolver.js'
+import { resolveEntitlements, type ResolvedEntitlements } from './resolver.js'
 
 // The live count behind a numeric entitlement, such as the org's projects.
 export type EntitlementCounter = (ctx: TenantContext) => Promise<number>
 
-export interface PolicyBlueprint {
-  plans: Plans
+export interface PolicyEngineOptions {
+  // The blueprint's entitlement vocabulary: the keys entitled() accepts.
+  entitlements: EntitlementVocabulary
   // Role -> permission globs. The kernel's default roles are merged under
   // these, as defineSaaS() does.
   roles?: Readonly<Record<RoleId, readonly string[]>>
+  // The plan catalog (planSource() over the plans table, ADR-010).
+  plans: PlanSource
+  counters?: Partial<Record<EntitlementKey, EntitlementCounter>>
 }
 
 // Boolean entitlements as feature flags; the shape an OpenFeature provider
@@ -49,20 +50,19 @@ function grants(glob: string, permission: Permission): boolean {
   return glob.endsWith('.*') && permission.startsWith(glob.slice(0, -1))
 }
 
-export function createPolicyEngine(options: {
-  blueprint: PolicyBlueprint
-  counters?: Partial<Record<EntitlementKey, EntitlementCounter>>
-}): PolicyEngine {
-  const { plans } = options.blueprint
+// entitled() and requireEntitlement() throw a RangeError for a key the
+// vocabulary does not declare: a misspelled key is a bug, not a denial.
+export function createPolicyEngine(options: PolicyEngineOptions): PolicyEngine {
+  const { entitlements: vocabulary, plans } = options
   const roles: Record<RoleId, readonly string[]> = {
     ...defaultRoles,
-    ...options.blueprint.roles,
+    ...options.roles,
   }
   const counters = options.counters ?? {}
 
   const resolve = async (ctx: TenantContext): Promise<ResolvedEntitlements> => {
-    const rows = await loadPolicyRows(ctx)
-    return resolveEntitlements({ plans, ...rows, now: Date.now() })
+    const [catalog, rows] = await Promise.all([plans(), loadPolicyRows(ctx)])
+    return resolveEntitlements({ ...catalog, ...rows, now: Date.now() })
   }
   const count = async (ctx: TenantContext, key: EntitlementKey) =>
     (await counters[key]?.(ctx)) ?? 0
@@ -78,6 +78,11 @@ export function createPolicyEngine(options: {
     },
 
     async entitled(ctx, key, delta = 1) {
+      if (!Object.hasOwn(vocabulary, key)) {
+        throw new RangeError(
+          `entitled: ${key} is not in the blueprint's entitlements`,
+        )
+      }
       const { values } = await resolve(ctx)
       const value = Object.hasOwn(values, key) ? values[key] : undefined
       if (typeof value === 'boolean') {

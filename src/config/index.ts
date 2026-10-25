@@ -6,6 +6,8 @@ import { blueprintSchema, type defaultRoles } from './internal/schema.js'
 export {
   blueprintSchema,
   defaultRoles,
+  entitlementKeySchema,
+  entitlementsSchema,
   permissionSchema,
 } from './internal/schema.js'
 export {
@@ -51,14 +53,15 @@ export type BlueprintInput = z.input<typeof blueprintSchema>
 type ParsedBlueprint = z.output<typeof blueprintSchema>
 type RoleKey<T> = T extends { roles: infer R } ? keyof R & string : never
 
-// The parsed blueprint, keeping the plan keys, entitlement keys, role names
-// and billing provider of the input it came from.
+// The parsed blueprint, keeping the entitlement keys and kinds, role names
+// and billing provider of the input it came from. It holds no plans: they
+// are rows in the kernel's plans table (ADR-010).
 export type Blueprint<T extends BlueprintInput = BlueprintInput> = Omit<
   ParsedBlueprint,
-  'plans' | 'roles' | 'billing'
+  'entitlements' | 'roles' | 'billing'
 > & {
-  plans: {
-    [P in keyof T['plans']]: { [E in keyof T['plans'][P]]: number | boolean }
+  entitlements: {
+    [K in keyof T['entitlements']]: { kind: T['entitlements'][K]['kind'] }
   }
   roles: Record<keyof typeof defaultRoles | RoleKey<T>, string[]>
   billing: Extract<ParsedBlueprint['billing'], { kind: T['billing']['kind'] }>

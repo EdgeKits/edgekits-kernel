@@ -9,10 +9,13 @@ export type Plans = Readonly<
 >
 
 export type EntitlementSource =
-  'override' | 'lifetime' | 'subscription' | 'trial' | 'free' | 'none'
+  'override' | 'lifetime' | 'subscription' | 'trial' | 'default' | 'none'
 
 export interface ResolveInput {
   plans: Plans
+  // The catalog's default plan (ADR-010), or null: then an org with no
+  // subscription or trial resolves to no plan.
+  defaultPlan: PlanId | null
   subscriptions: readonly Pick<
     SubscriptionRecord,
     'kind' | 'plan' | 'status' | 'trialEndsAt' | 'updatedAt'
@@ -44,10 +47,10 @@ const newest = (rows: Row[]): Row | undefined =>
     undefined,
   )
 
-function planSource(
+function basePlan(
   input: ResolveInput,
 ): { plan: PlanId; source: EntitlementSource; trialEndsAt?: number } | null {
-  const { subscriptions, plans, now } = input
+  const { subscriptions, plans, defaultPlan, now } = input
   const lifetime = newest(
     subscriptions.filter((r) => r.kind === 'lifetime' && r.status === 'active'),
   )
@@ -66,18 +69,20 @@ function planSource(
   if (trial?.trialEndsAt != null) {
     return { plan: trial.plan, source: 'trial', trialEndsAt: trial.trialEndsAt }
   }
-  if (Object.hasOwn(plans, 'free')) return { plan: 'free', source: 'free' }
+  if (defaultPlan !== null && Object.hasOwn(plans, defaultPlan)) {
+    return { plan: defaultPlan, source: 'default' }
+  }
   return null
 }
 
 // Pure. Sources in order (blueprint section 3.2): an unexpired admin override
 // per key (ADR-006) > an active lifetime purchase > the newest active
-// subscription > the newest trial with trialEndsAt after now > the free plan
-// when the blueprint declares one > nothing. Expired trials and overrides are
-// skipped, never changed. A row whose plan the blueprint no longer declares
-// grants no values.
+// subscription > the newest trial with trialEndsAt after now > the catalog's
+// default plan when it has one > nothing. Expired trials and overrides are
+// skipped, never changed. A row whose plan is not in `plans` grants no
+// values.
 export function resolveEntitlements(input: ResolveInput): ResolvedEntitlements {
-  const base = planSource(input)
+  const base = basePlan(input)
   const values: Record<EntitlementKey, EntitlementValue> = {
     ...(base ? input.plans[base.plan] : undefined),
   }

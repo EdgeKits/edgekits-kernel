@@ -40,49 +40,30 @@ export const permissionSchema = z
 
 const rolesSchema = z.record(z.string().min(1), z.array(permissionSchema))
 
-// A plan maps entitlement keys to a limit (-1 means unlimited) or a switch.
-const entitlementSchema = z.union([
-  z
-    .number()
-    .refine(
-      (n) => n >= 0 || n === -1,
-      'Expected a non-negative limit or -1 (unlimited)',
-    ),
-  z.boolean(),
-])
+// The entitlement vocabulary (ADR-010): each key the app checks, with its
+// kind. Plans live in the kernel's plans table, and their values are checked
+// against this vocabulary when they are written: a limit takes a
+// non-negative integer or -1 (unlimited), a switch a boolean. Keys are one
+// lowercase segment, like a permission's resource.
+export const entitlementKeySchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9_-]*$/, 'Expected a lowercase key such as members')
 
-const plansSchema = z
-  .record(z.string().min(1), z.record(z.string().min(1), entitlementSchema))
-  .refine(
-    (plans) => Object.keys(plans).length > 0,
-    'Expected at least one plan',
+export const entitlementsSchema = z
+  .record(
+    entitlementKeySchema,
+    z.strictObject({ kind: z.enum(['limit', 'switch']) }),
   )
-
-// A trial without a card is run by the kernel; with a card, by the provider.
-export const trialSchema = z.strictObject({
-  days: z.int().min(1).default(14),
-  requiresCard: z.boolean(),
-})
-
-// Provider product ids mapped to the plan they grant and how long.
-export const productsSchema = z.record(
-  z.string().min(1),
-  z.strictObject({
-    plan: z.string().min(1),
-    kind: z.enum(['subscription', 'lifetime']),
-  }),
-)
+  .refine(
+    (entitlements) => Object.keys(entitlements).length > 0,
+    'Expected at least one entitlement',
+  )
 
 export const paddleBillingSchema = z.strictObject({
   kind: z.literal('paddle'),
   model: billingModelSchema,
-  // Optional here so that blueprintSchema can tell a given value from the
-  // default; blueprintSchema sets 0 when it is absent.
-  trialDays: z.int().nonnegative().optional(),
   currency: currencySchema,
   proration: prorationModeSchema.optional(),
-  trial: trialSchema.optional(),
-  products: productsSchema.optional(),
 })
 
 export const billingSchema = z.discriminatedUnion('kind', [paddleBillingSchema])
@@ -106,67 +87,29 @@ export const adminSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('none') }),
 ])
 
-// Rules across fields: a product grants a declared plan, and trialDays and
-// trial.days agree when both are given. Runs only when every field parsed.
-function checkBilling(
-  blueprint: {
-    plans: Record<string, unknown>
-    billing: z.output<typeof billingSchema>
-  },
-  ctx: z.RefinementCtx,
-) {
-  const { billing, plans } = blueprint
-  for (const [productId, product] of Object.entries(billing.products ?? {})) {
-    if (!Object.hasOwn(plans, product.plan)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['billing', 'products', productId, 'plan'],
-        message: `Product ${productId} grants plan ${product.plan}, which is not in plans`,
-      })
-    }
-  }
-  if (
-    billing.trialDays !== undefined &&
-    billing.trial !== undefined &&
-    billing.trialDays !== billing.trial.days
-  ) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['billing', 'trialDays'],
-      message: `billing.trialDays (${billing.trialDays}) and billing.trial.days (${billing.trial.days}) must agree`,
-    })
-  }
-}
-
-export const blueprintSchema = z
-  .strictObject({
-    name: z.string().min(1),
-    locales: z
-      .array(z.string().min(1))
-      .min(1)
-      .refine(unique, 'Locales must be unique'),
-    tenancy: tenancySchema,
-    auth: authSchema,
-    roles: rolesSchema
-      .optional()
-      .transform((roles): Record<string, string[]> => ({
-        owner: [...defaultRoles.owner],
-        admin: [...defaultRoles.admin],
-        member: [...defaultRoles.member],
-        ...roles,
-      })),
-    plans: plansSchema,
-    billing: billingSchema,
-    flags: flagsSchema.optional(),
-    ai: aiSchema.optional(),
-    admin: adminSchema.optional(),
-    modules: z
-      .array(z.string().min(1))
-      .refine(unique, 'Modules must be unique')
-      .default([]),
-  })
-  .superRefine(checkBilling)
-  .transform(({ billing, ...rest }) => ({
-    ...rest,
-    billing: { ...billing, trialDays: billing.trialDays ?? 0 },
-  }))
+export const blueprintSchema = z.strictObject({
+  name: z.string().min(1),
+  locales: z
+    .array(z.string().min(1))
+    .min(1)
+    .refine(unique, 'Locales must be unique'),
+  tenancy: tenancySchema,
+  auth: authSchema,
+  roles: rolesSchema
+    .optional()
+    .transform((roles): Record<string, string[]> => ({
+      owner: [...defaultRoles.owner],
+      admin: [...defaultRoles.admin],
+      member: [...defaultRoles.member],
+      ...roles,
+    })),
+  entitlements: entitlementsSchema,
+  billing: billingSchema,
+  flags: flagsSchema.optional(),
+  ai: aiSchema.optional(),
+  admin: adminSchema.optional(),
+  modules: z
+    .array(z.string().min(1))
+    .refine(unique, 'Modules must be unique')
+    .default([]),
+})

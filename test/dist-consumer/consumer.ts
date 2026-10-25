@@ -21,20 +21,45 @@ import {
 } from '@edgekits/kernel/events'
 import { errors, securityHeaders, tenant } from '@edgekits/kernel/hono'
 import {
+  addPrice,
   applyProviderSubscription,
+  archivePlan,
+  archivePrice,
+  createPlan,
   createPolicyEngine,
   entitlementOverrides,
   expireTrials,
+  getPlan,
+  listPlans,
   loadPolicyRows,
+  PlanError,
+  planForPrice,
+  planPrices,
+  plans,
+  planSource,
   PolicyError,
+  priceForPlan,
   resolveEntitlements,
+  setDefaultPlan,
   setTrialEnd,
   startKernelTrial,
   subscriptions,
+  updatePlan,
+  type EntitlementSource,
+  type PlanRecord,
+  type PlanSource,
   type PolicyEngine,
   type ResolvedEntitlements,
 } from '@edgekits/kernel/policy'
-import { paddleCapabilities, type MailProvider } from '@edgekits/kernel/ports'
+import {
+  assertPriceSupported,
+  CapabilityError,
+  paddleCapabilities,
+  type BillingProvider,
+  type CatalogPriceInput,
+  type MailProvider,
+  type ProrationMode,
+} from '@edgekits/kernel/ports'
 import {
   ConflictError,
   tenantReference,
@@ -70,16 +95,61 @@ export const orgShape: Equal<
   { id: string; kind: 'personal' | 'team'; slug: string }
 > = true
 
-// A parsed blueprint is what the policy engine takes.
-export const engineFor = (blueprint: Blueprint): PolicyEngine =>
-  createPolicyEngine({ blueprint })
+// The policy engine takes the blueprint's vocabulary and roles and the plan
+// catalog's source (ADR-010).
+export const engineFor = (
+  blueprint: Blueprint,
+  source: PlanSource,
+): PolicyEngine =>
+  createPolicyEngine({
+    entitlements: blueprint.entitlements,
+    roles: blueprint.roles,
+    plans: source,
+  })
 
 export const resolved: ResolvedEntitlements = resolveEntitlements({
   plans: { free: { projects: 3, ai: false } },
+  defaultPlan: 'free',
   subscriptions: [],
   overrides: [],
   now: 0,
 })
+
+// The fallback source is the default plan; the old 'free' member is gone.
+export const sources: Equal<
+  EntitlementSource,
+  'override' | 'lifetime' | 'subscription' | 'trial' | 'default' | 'none'
+> = true
+
+export const planShape: Equal<
+  keyof PlanRecord,
+  | 'id'
+  | 'name'
+  | 'entitlements'
+  | 'isDefault'
+  | 'trial'
+  | 'sortOrder'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'archivedAt'
+  | 'prices'
+> = true
+
+// The port's catalog and subscription methods, and changePlan's modes.
+type Port = BillingProvider
+export const portShape: [
+  Equal<Parameters<Port['changePlan']>[2], ProrationMode>,
+  Equal<ProrationMode, 'immediate' | 'none' | 'period-end'>,
+  Equal<Parameters<Port['cancel']>[1], 'period-end' | 'now'>,
+  Equal<
+    Awaited<ReturnType<Port['createProduct']>>,
+    { providerProductId: string }
+  >,
+  Equal<Parameters<Port['createPrice']>[0], CatalogPriceInput>,
+  Equal<Awaited<ReturnType<Port['createPrice']>>, { providerPriceId: string }>,
+  Equal<Parameters<Port['archivePrice']>, [providerPriceId: string]>,
+  Equal<Parameters<Port['keep']>[0], Parameters<Port['portalUrl']>[0]>,
+] = [true, true, true, true, true, true, true, true]
 
 // The env output type survives the declaration boundary.
 const composedEnv = composeEnv([
@@ -98,7 +168,12 @@ export const envShape: Equal<
 > = true
 
 // The policy tables are exported for a consumer's migrations.
-export const policyTables = [subscriptions, entitlementOverrides] as const
+export const policyTables = [
+  subscriptions,
+  entitlementOverrides,
+  plans,
+  planPrices,
+] as const
 
 export const subpathExports = [
   toLocals,
@@ -115,9 +190,23 @@ export const subpathExports = [
   loadPolicyRows,
   setTrialEnd,
   startKernelTrial,
+  addPrice,
+  archivePlan,
+  archivePrice,
+  createPlan,
+  getPlan,
+  listPlans,
+  PlanError,
+  planForPrice,
+  planSource,
+  priceForPlan,
+  setDefaultPlan,
+  updatePlan,
   ConflictError,
   tenantReference,
   paddleCapabilities,
+  assertPriceSupported,
+  CapabilityError,
 ] as const
 
 export const mailPort: MailProvider = {

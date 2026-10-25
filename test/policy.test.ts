@@ -14,8 +14,10 @@ import {
   startKernelTrial,
   subpath,
   type EntitlementOverrideRecord,
+  type EntitlementVocabulary,
+  type PlanCatalog,
   type Plans,
-  type PolicyBlueprint,
+  type PlanSource,
   type ProviderSubscriptionRecord,
   type ResolveInput,
   type SubscriptionRecord,
@@ -68,7 +70,14 @@ const override = (
 
 const resolve = (
   input: Partial<ResolveInput> & Pick<ResolveInput, 'subscriptions'>,
-) => resolveEntitlements({ plans, overrides: [], now: NOW, ...input })
+) =>
+  resolveEntitlements({
+    plans,
+    defaultPlan: 'free',
+    overrides: [],
+    now: NOW,
+    ...input,
+  })
 
 const paidPlans = { pro: plans.pro, team: plans.team }
 
@@ -95,6 +104,7 @@ describe('resolveEntitlements: each source alone', () => {
     expect(
       resolveEntitlements({
         plans: paidPlans,
+        defaultPlan: null,
         subscriptions: [],
         overrides: [override('projects', 7)],
         now: NOW,
@@ -125,23 +135,48 @@ describe('resolveEntitlements: each source alone', () => {
     ).toEqual({ plan: 'pro', source: 'trial', values: plans.pro, trialEndsAt })
   })
 
-  it('free: no rows and a free plan', () => {
+  it('default: no rows and a default plan', () => {
     expect(resolve({ subscriptions: [] })).toEqual({
       plan: 'free',
-      source: 'free',
+      source: 'default',
       values: plans.free,
     })
   })
 
-  it('none: no rows and no free plan', () => {
+  it('default: the catalog names any plan as the default', () => {
+    expect(resolve({ subscriptions: [], defaultPlan: 'team' })).toEqual({
+      plan: 'team',
+      source: 'default',
+      values: plans.team,
+    })
+  })
+
+  it('none: no rows and no default plan', () => {
     expect(
       resolveEntitlements({
         plans: paidPlans,
+        defaultPlan: null,
         subscriptions: [],
         overrides: [],
         now: NOW,
       }),
     ).toEqual({ plan: null, source: 'none', values: {} })
+  })
+
+  it('none: a plan named "free" is not a fallback without the default flag', () => {
+    expect(resolve({ subscriptions: [], defaultPlan: null })).toEqual({
+      plan: null,
+      source: 'none',
+      values: {},
+    })
+  })
+
+  it('none: a default plan id that is not in the catalog grants nothing', () => {
+    expect(resolve({ subscriptions: [], defaultPlan: 'gold' })).toEqual({
+      plan: null,
+      source: 'none',
+      values: {},
+    })
   })
 })
 
@@ -184,7 +219,7 @@ describe('resolveEntitlements: priority', () => {
     expect(resolved.trialEndsAt).toBeUndefined()
   })
 
-  it('trial over free', () => {
+  it('trial over default', () => {
     const resolved = resolve({
       subscriptions: [
         row('subscription', 'pro', 'trialing', { trialEndsAt: NOW + 1 }),
@@ -213,13 +248,13 @@ describe('resolveEntitlements: expiry and inactive rows', () => {
     const resolved = resolve({ subscriptions: [], overrides })
     expect(resolved).toEqual({
       plan: 'free',
-      source: 'free',
+      source: 'default',
       values: plans.free,
     })
     expect(overrides[0]).toEqual(override('projects', 99, NOW))
   })
 
-  it('an expired trial falls to free, and the row is not changed', () => {
+  it('an expired trial falls to the default plan, and the row is not changed', () => {
     const subscriptionRows = Object.freeze([
       Object.freeze(
         row('subscription', 'pro', 'trialing', { trialEndsAt: NOW }),
@@ -227,7 +262,7 @@ describe('resolveEntitlements: expiry and inactive rows', () => {
       Object.freeze(row('subscription', 'team', 'expired')),
     ])
     const resolved = resolve({ subscriptions: subscriptionRows })
-    expect(resolved.source).toBe('free')
+    expect(resolved.source).toBe('default')
     expect(resolved.values).toEqual(plans.free)
     expect(subscriptionRows[0]?.status).toBe('trialing')
   })
@@ -241,7 +276,7 @@ describe('resolveEntitlements: expiry and inactive rows', () => {
         row('lifetime', 'team', 'canceled'),
       ],
     })
-    expect(resolved.source).toBe('free')
+    expect(resolved.source).toBe('default')
   })
 
   it('keeps -1 (unlimited) and boolean gates as declared', () => {
@@ -293,8 +328,23 @@ const insertOverride = (
     ...values,
   })
 
-const blueprint: PolicyBlueprint = {
-  plans,
+const vocabulary: EntitlementVocabulary = {
+  projects: { kind: 'limit' },
+  seats: { kind: 'limit' },
+  ai: { kind: 'switch' },
+  sso: { kind: 'switch' },
+  storage_gb: { kind: 'limit' },
+  api_calls: { kind: 'limit' },
+}
+
+// A plan source that always answers `catalog`, for the engine tests.
+const fixedSource = (
+  catalog: PlanCatalog = { plans, defaultPlan: 'free' },
+): PlanSource => Object.assign(async () => catalog, { invalidate() {} })
+
+const blueprint = {
+  entitlements: vocabulary,
+  plans: fixedSource(),
   roles: {
     member: ['project.read', 'project.write'],
     viewer: ['project.read'],
@@ -308,7 +358,7 @@ beforeAll(async () => {
 })
 
 describe('createPolicyEngine: can()', () => {
-  const engine = createPolicyEngine({ blueprint })
+  const engine = createPolicyEngine(blueprint)
   const org = freshOrg()
 
   it("'*' grants every permission (default owner)", () => {
@@ -356,7 +406,7 @@ describe('createPolicyEngine: can()', () => {
 describe('createPolicyEngine: entitled()', () => {
   // Live count of the org's projects through its repository.
   const engine = createPolicyEngine({
-    blueprint,
+    ...blueprint,
     counters: {
       projects: async (ctx) => (await ctx.db.repo(projects).findMany()).length,
     },
@@ -423,10 +473,35 @@ describe('createPolicyEngine: entitled()', () => {
 
   it('a key absent from the resolved values: entitlement with limit 0', async () => {
     const ctx = contextFor(freshOrg())
-    expect(await engine.entitled(ctx, 'storageGb')).toEqual({
+    expect(await engine.entitled(ctx, 'storage_gb')).toEqual({
       ok: false,
       reason: 'entitlement',
-      key: 'storageGb',
+      key: 'storage_gb',
+      limit: 0,
+      current: 0,
+    })
+  })
+
+  it('a key the vocabulary does not declare is a RangeError, not a denial', async () => {
+    const ctx = contextFor(freshOrg())
+    await expect(engine.entitled(ctx, 'storageGb')).rejects.toThrow(RangeError)
+    await expect(engine.requireEntitlement(ctx, 'nope')).rejects.toThrow(
+      RangeError,
+    )
+  })
+
+  it('without a default plan, an org with no subscription has limit 0', async () => {
+    const paywalled = createPolicyEngine({
+      ...blueprint,
+      plans: fixedSource({ plans, defaultPlan: null }),
+      counters: { projects: async () => 0 },
+    })
+    expect(
+      await paywalled.entitled(contextFor(freshOrg()), 'projects'),
+    ).toEqual({
+      ok: false,
+      reason: 'entitlement',
+      key: 'projects',
       limit: 0,
       current: 0,
     })
@@ -484,7 +559,7 @@ describe('createPolicyEngine: entitled()', () => {
 })
 
 describe('kernel trials', () => {
-  const engine = createPolicyEngine({ blueprint })
+  const engine = createPolicyEngine(blueprint)
 
   it('startKernelTrial creates one trialing row and refuses a second', async () => {
     const ctx = contextFor(freshOrg())
@@ -527,7 +602,7 @@ describe('kernel trials', () => {
     ).rejects.toThrow(RangeError)
   })
 
-  it('setTrialEnd moves the end, and ending it falls to free', async () => {
+  it('setTrialEnd moves the end, and ending it falls to the default plan', async () => {
     const ctx = contextFor(freshOrg())
     const now = Date.now()
     await startKernelTrial(ctx, { plan: 'pro', days: 14, now })
@@ -755,15 +830,16 @@ describe('applyProviderSubscription', () => {
 
 describe('isolation between orgs', () => {
   it('overrides and a lifetime row in org A change nothing for org B', async () => {
-    const engine = createPolicyEngine({ blueprint })
+    const engine = createPolicyEngine(blueprint)
     const random = seeded(0x9011c7)
-    const pool = ['projects', 'seats', 'ai', 'sso', 'storageGb', 'apiCalls']
+    const pool = ['projects', 'seats', 'ai', 'sso', 'storage_gb', 'api_calls']
     const planIds = Object.keys(plans) as (keyof typeof plans)[]
 
     for (let round = 0; round < 6; round++) {
       const a = contextFor(freshOrg())
       const b = contextFor(freshOrg())
-      // B starts in a random state: free, a subscription, or a trial.
+      // B starts in a random state: the default plan, a subscription, or a
+      // trial.
       const state = Math.floor(random() * 3)
       const bPlan = planIds[Math.floor(random() * planIds.length)] ?? 'pro'
       if (state === 1) {
