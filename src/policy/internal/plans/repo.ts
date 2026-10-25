@@ -139,7 +139,10 @@ export function planEntitlementIssues(
 const wholeNumber = (n: unknown, min: number) =>
   typeof n === 'number' && Number.isSafeInteger(n) && n >= min
 
-function planIssues(
+// Everything createPlan() (or updatePlan(), for a partial input) refuses in
+// its input, without writing: for a caller that must validate before calling
+// a provider. Empty when the input fits.
+export function planInputIssues(
   vocabulary: EntitlementVocabulary,
   input: Partial<NewPlan>,
 ): string[] {
@@ -288,7 +291,7 @@ export async function createPlan(
   input: NewPlan,
   now: number = Date.now(),
 ): Promise<PlanRecord> {
-  assertValid(planIssues(vocabulary, input))
+  assertValid(planInputIssues(vocabulary, input))
   const isDefault = input.isDefault === true
   const insertPlan = db.insert(plans).values({
     id: input.id,
@@ -335,7 +338,7 @@ export async function updatePlan(
   patch: PlanPatch,
   now: number = Date.now(),
 ): Promise<PlanRecord> {
-  assertValid(planIssues(vocabulary, patch))
+  assertValid(planInputIssues(vocabulary, patch))
   const result = await db
     .update(plans)
     .set({

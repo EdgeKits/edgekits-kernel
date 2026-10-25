@@ -28,6 +28,7 @@ export {
   loadPlanCatalog,
   planEntitlementIssues,
   PlanError,
+  planInputIssues,
   planForPrice,
   planSource,
   priceForPlan,

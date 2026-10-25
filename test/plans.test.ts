@@ -16,6 +16,7 @@ import {
   planEntitlementIssues,
   PlanError,
   planForPrice,
+  planInputIssues,
   planSource,
   priceForPlan,
   setDefaultPlan,
@@ -140,6 +141,22 @@ describe('entitlement values against the vocabulary', () => {
       ),
     ).toMatchObject({ reason: 'invalid' })
     expect((await getPlan(db, id))?.entitlements).toEqual({ members: 2 })
+  })
+
+  it('planInputIssues reports what createPlan refuses, without writing', async () => {
+    const id = freshId()
+    const input = {
+      id,
+      name: 'ok',
+      entitlements: { members: 2, gold: 1 },
+      prices: [price(`pri_${id}`, { currency: 'usd' })],
+    }
+    expect(planInputIssues(vocabulary, input)).toEqual([
+      'entitlement gold is not in the blueprint',
+      `price pri_${id}: currency is an ISO 4217 code`,
+    ])
+    expect(planInputIssues(vocabulary, { name: 'renamed' })).toEqual([])
+    expect(await getPlan(db, id)).toBeNull()
   })
 
   it('refuses a malformed id, name, trial or price', async () => {
