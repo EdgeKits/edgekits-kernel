@@ -27,6 +27,9 @@ export interface EntitlementFlags {
 }
 
 export interface PolicyEngine {
+  // The org's plan, its source and the entitlement values, as the resolver
+  // gives them now (plan null: no source grants one).
+  resolve(ctx: TenantContext): Promise<ResolvedEntitlements>
   can(ctx: TenantContext, permission: Permission): Decision
   entitled(
     ctx: TenantContext,
@@ -68,6 +71,8 @@ export function createPolicyEngine(options: PolicyEngineOptions): PolicyEngine {
     (await counters[key]?.(ctx)) ?? 0
 
   const engine: PolicyEngine = {
+    resolve,
+
     can(ctx, permission) {
       const globs = Object.hasOwn(roles, ctx.actor.role)
         ? (roles[ctx.actor.role] ?? [])

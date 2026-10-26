@@ -15,6 +15,7 @@ export {
   entitlementOverrides,
   planPrices,
   plans,
+  settings,
   subscriptions,
 } from './internal/policy.tables.js'
 // The plan catalog (ADR-010): written only by AdminRpc and the seed.
@@ -57,11 +58,21 @@ export {
 } from './internal/model.js'
 export {
   applyProviderSubscription,
+  endKernelTrial,
   expireTrials,
   loadPolicyRows,
   setTrialEnd,
   startKernelTrial,
+  type KernelTrialEnd,
 } from './internal/repo.js'
+// Runtime settings (ADR-010): written only by AdminRpc and the seed.
+export {
+  getSetting,
+  setSetting,
+  setTrialPlan,
+  trialPlan,
+  trialPlanKey,
+} from './internal/settings/repo.js'
 export {
   resolveEntitlements,
   type EntitlementSource,
@@ -88,3 +99,6 @@ export type Decision =
       current: number
       upgradeTo?: PlanId
     }
+  // The org resolves to no plan: no default plan, subscription or trial
+  // (ADR-010's paywall; requirePlan() in /hono).
+  | { ok: false; reason: 'paywall' }

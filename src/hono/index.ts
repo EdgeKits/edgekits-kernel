@@ -6,6 +6,7 @@ export {
   securityHeaders,
   type SecurityHeadersOptions,
 } from './internal/headers.js'
+export { requirePlan, type RequirePlanOptions } from './internal/plan.js'
 export {
   tenant,
   type ExplicitOrg,

@@ -77,6 +77,45 @@ export async function setTrialEnd(
   return changed === 1
 }
 
+// Why a kernel trial ends before or at its end: the org subscribed at a
+// provider, or the trial ran out (ADR-012's trial phase).
+export type KernelTrialEnd = 'subscribed' | 'expired'
+
+// The statement that ends an org's kernel trial in progress: the row stays,
+// expired, with trial_ends_at at the moment it ended, so the org keeps the
+// record of its one trial and startKernelTrial() still refuses a second.
+const endTrialStatement = (db: TenantDatabase, orgId: OrgId, now: number) =>
+  db
+    .update(subscriptions)
+    .set({ status: 'expired', trialEndsAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(subscriptions.orgId, orgId),
+        eq(subscriptions.id, kernelTrialId),
+        eq(subscriptions.status, 'trialing'),
+      ),
+    )
+
+// Ends the org's kernel trial now, whatever the reason (the reason is the
+// caller's record; the row is the same either way, and the same as
+// expireTrials() leaves). Resolves to true when a trial was in progress,
+// false when the org has none (a no-op).
+export async function endKernelTrial(
+  ctx: TenantContext,
+  options: { reason: KernelTrialEnd; now?: number },
+): Promise<boolean> {
+  const now = options.now ?? Date.now()
+  const repo = ctx.db.repo(subscriptions)
+  const row = await repo.findById(kernelTrialId)
+  if (row?.status !== 'trialing') return false
+  const changed = await repo.update(kernelTrialId, {
+    status: 'expired',
+    trialEndsAt: now,
+    updatedAt: now,
+  })
+  return changed === 1
+}
+
 // For a scheduled job: marks every kernel trial whose end has passed as
 // expired, across all orgs, and resolves to the number of rows changed. This
 // is the kernel's one statement on a tenant table without an org_id
@@ -105,14 +144,17 @@ export async function expireTrials(
 // subscription, keyed (org_id, '<provider>:<providerSubscriptionId>'). The
 // org comes from the caller, never from the record. An existing row changes
 // only when it belongs to the same provider and the record is not older than
-// it (updatedAt), so a late Workflow cannot roll a subscription back and the
-// kernel's trial rows are never touched. Resolves to true when a row was
-// written. One INSERT statement that sets org_id itself, so it runs on a
-// guarded or an unguarded database handle alike.
+// it (updatedAt), so a late Workflow cannot roll a subscription back. When
+// the record is active or trialing, the same batch ends the org's kernel
+// trial (endKernelTrial(), reason 'subscribed'): the provider has taken over.
+// Resolves to true when the provider row was written. Every statement sets
+// or names org_id itself, so it runs on a guarded or an unguarded database
+// handle alike.
 export async function applyProviderSubscription(
   db: TenantDatabase,
   orgId: OrgId,
   record: ProviderSubscriptionRecord,
+  now: number = Date.now(),
 ): Promise<boolean> {
   const { provider, providerSubscriptionId } = record
   if (provider === kernelProvider || provider === '') {
@@ -135,7 +177,7 @@ export async function applyProviderSubscription(
     cancelAt: record.cancelAt,
     updatedAt: record.updatedAt,
   }
-  const result = await db
+  const upsert = db
     .insert(subscriptions)
     .values({
       ...values,
@@ -152,6 +194,11 @@ export async function applyProviderSubscription(
         lte(subscriptions.updatedAt, record.updatedAt),
       ),
     })
-    .run()
+  if (record.status !== 'active' && record.status !== 'trialing') {
+    const result = await upsert.run()
+    return result.meta.changes === 1
+  }
+  // D1 runs a batch as one transaction.
+  const [result] = await db.batch([upsert, endTrialStatement(db, orgId, now)])
   return result.meta.changes === 1
 }

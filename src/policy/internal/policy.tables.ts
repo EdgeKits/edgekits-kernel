@@ -80,6 +80,15 @@ export const plans = sqliteTable(
   ],
 )
 
+// Runtime settings of the deployment, such as billing.trialPlan (ADR-010):
+// not a tenant table. Written only by AdminRpc and the seed, through
+// settings/repo.ts; the value is JSON text. updated_at is epoch milliseconds.
+export const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value', { mode: 'json' }).$type<unknown>().notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
 // A plan's prices at a provider; id is the provider's price id. One provider
 // is active per deployment; after a provider switch a plan carries a second
 // set of prices and the old ones stay for the subscriptions that use them.

@@ -9,8 +9,8 @@ export interface ErrorsOptions {
   log?: (error: unknown) => void
 }
 
-// For app.onError(): PolicyError to 402 (entitlement) or 403 (forbidden)
-// with the decision, TenancyError to 404, ConflictError to 409, PlanError to
+// For app.onError(): PolicyError to 402 (entitlement, paywall) or 403
+// (forbidden) with the decision, TenancyError to 404, ConflictError to 409, PlanError to
 // 400 with its issues ('invalid') or 404 ('not-found'), CapabilityError to
 // 400 with its issues, a Hono HTTPException to its own response, anything
 // else (TenantGuardError included) to 500 with no detail in the body.
@@ -21,7 +21,7 @@ export function errors(options: ErrorsOptions = {}): ErrorHandler {
       const { decision } = error
       return c.json(
         { error: decision.reason, decision },
-        decision.reason === 'entitlement' ? 402 : 403,
+        decision.reason === 'forbidden' ? 403 : 402,
       )
     }
     if (error instanceof TenancyError) {

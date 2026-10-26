@@ -19,7 +19,12 @@ import {
   planInputIssues,
   planSource,
   priceForPlan,
+  getSetting,
   setDefaultPlan,
+  setSetting,
+  setTrialPlan,
+  trialPlan,
+  trialPlanKey,
   updatePlan,
   type EntitlementVocabulary,
   type NewPlanPrice,
@@ -537,5 +542,50 @@ describe('errors() and the catalog', () => {
     })
     expect((await app.request('/missing', { method: 'POST' })).status).toBe(404)
     expect((await app.request('/taken', { method: 'POST' })).status).toBe(409)
+  })
+})
+
+describe('settings and the trial plan', () => {
+  it('getSetting is null for an unset key; setSetting inserts, then replaces', async () => {
+    const key = `test.${freshId('key')}`
+    expect(await getSetting(db, key)).toBeNull()
+    await setSetting(db, key, { days: 14 })
+    expect(await getSetting(db, key)).toEqual({ days: 14 })
+    await setSetting(db, key, 'other')
+    expect(await getSetting(db, key)).toBe('other')
+  })
+
+  it('trialPlan is the named plan row, or null when unset, missing or archived', async () => {
+    // Unset until this test names one (no other test in the file does).
+    expect(await trialPlan(db)).toBeNull()
+
+    const id = freshId()
+    await newPlan(id, { trial: { days: 14, requiresCard: true } })
+    await setTrialPlan(db, id)
+    expect(await getSetting(db, trialPlanKey)).toBe(id)
+    expect(await trialPlan(db)).toMatchObject({
+      id,
+      trial: { days: 14, requiresCard: true },
+    })
+
+    await archivePlan(unguarded, id)
+    expect(await trialPlan(db)).toBeNull()
+
+    await setSetting(db, trialPlanKey, 'no-such-plan')
+    expect(await trialPlan(db)).toBeNull()
+  })
+
+  it('setTrialPlan refuses a missing or archived plan before writing', async () => {
+    const current = freshId()
+    await newPlan(current)
+    await setTrialPlan(db, current)
+    const archived = freshId()
+    await newPlan(archived)
+    await archivePlan(unguarded, archived)
+
+    const notFound = { reason: 'not-found', issues: [] }
+    expect(await reasonOf(() => setTrialPlan(db, 'no-such'))).toEqual(notFound)
+    expect(await reasonOf(() => setTrialPlan(db, archived))).toEqual(notFound)
+    expect(await getSetting(db, trialPlanKey)).toBe(current)
   })
 })

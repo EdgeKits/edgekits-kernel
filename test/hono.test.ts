@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import {
   errors,
   noStore,
+  requirePlan,
   sameOrigin,
   securityHeaders,
   subpath,
@@ -13,7 +14,7 @@ import {
   type SessionInfo,
   type TenantVariables,
 } from '@edgekits/kernel/hono'
-import { PolicyError } from '@edgekits/kernel/policy'
+import { PolicyError, type PolicyEngine } from '@edgekits/kernel/policy'
 import {
   ConflictError,
   createTenantContext,
@@ -89,6 +90,9 @@ function app() {
       reason: 'forbidden',
       permission: 'billing.write',
     })
+  })
+  hono.get('/app/paywall', () => {
+    throw new PolicyError({ ok: false, reason: 'paywall' })
   })
   hono.get('/guard', () => {
     throw new TenantGuardError(
@@ -190,6 +194,16 @@ describe('@edgekits/kernel/hono', () => {
           reason: 'forbidden',
           permission: 'billing.write',
         },
+      })
+    })
+
+    it('maps a paywall PolicyError to 402 with the decision', async () => {
+      const { hono } = app()
+      const res = await hono.request('/app/paywall', as('alice'))
+      expect(res.status).toBe(402)
+      expect(await res.json()).toEqual({
+        error: 'paywall',
+        decision: { ok: false, reason: 'paywall' },
       })
     })
 
@@ -390,6 +404,92 @@ describe('@edgekits/kernel/hono', () => {
         headers: { Origin: 'https://evil.example', Cookie: 'session=x' },
       })
       expect(res.status).toBe(200)
+    })
+  })
+
+  describe('requirePlan()', () => {
+    // Org A resolves to no plan (the paywall), org B to pro.
+    const policy = {
+      resolve: async (ctx: { orgId: string }) =>
+        ctx.orgId === 'A'
+          ? { plan: null, source: 'none', values: {} }
+          : { plan: 'pro', source: 'subscription', values: {} },
+    } as unknown as PolicyEngine
+
+    function paywalled() {
+      const hono = new Hono<{ Variables: TenantVariables }>()
+      hono.onError(errors({ log: () => {} }))
+      hono.use(
+        '/app/*',
+        tenantMiddleware,
+        requirePlan({
+          policy,
+          allow: ['/app/billing', '/app/o/*'],
+          billingPath: '/app/billing',
+        }),
+      )
+      hono.all('/app/*', (c) => c.text(`reached ${c.req.path}`))
+      return hono
+    }
+
+    const browser =
+      'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    const request = (
+      path: string,
+      init: { method?: string; accept?: string; org?: 'B' } = {},
+    ) =>
+      paywalled().request(
+        path,
+        as('alice', {
+          method: init.method ?? 'GET',
+          headers: {
+            ...(init.accept ? { Accept: init.accept } : {}),
+            ...(init.org ? { Authorization: 'Bearer key-for-B' } : {}),
+          },
+        }),
+      )
+
+    it('redirects a navigation without a plan to the billing path', async () => {
+      const res = await request('/app/projects', { accept: browser })
+      expect(res.status).toBe(302)
+      expect(res.headers.get('Location')).toBe('/app/billing')
+    })
+
+    it('refuses a call without a plan with 402 paywall', async () => {
+      const paywall = {
+        error: 'paywall',
+        decision: { ok: false, reason: 'paywall' },
+      }
+      for (const init of [
+        { accept: 'application/json' },
+        {},
+        { accept: '*/*' },
+        { accept: 'application/json, text/html;q=0.9' },
+        { method: 'POST', accept: browser },
+      ]) {
+        const res = await request('/app/projects', init)
+        expect(res.status, JSON.stringify(init)).toBe(402)
+        expect(await res.json()).toEqual(paywall)
+      }
+    })
+
+    it('lets allowed paths through without a plan, exact and by prefix', async () => {
+      for (const path of ['/app/billing', '/app/o/acme', '/app/o']) {
+        const res = await request(path, { accept: browser })
+        expect(res.status, path).toBe(200)
+        expect(await res.text()).toBe(`reached ${path}`)
+      }
+      const post = await request('/app/billing', { method: 'POST' })
+      expect(post.status).toBe(200)
+      const near = await request('/app/billing/x', { accept: browser })
+      expect(near.status).toBe(302)
+    })
+
+    it('lets an org with a plan through, navigation or call', async () => {
+      const page = await request('/app/projects', { accept: browser, org: 'B' })
+      expect(page.status).toBe(200)
+      const call = await request('/app/projects', { method: 'POST', org: 'B' })
+      expect(call.status).toBe(200)
     })
   })
 })
