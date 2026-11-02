@@ -1,11 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
   applySubscriptionEvents,
   noopEventBus,
   subpath,
   type BillingEvent,
   type EventBus,
+  type KernelEvent,
+  type LifecycleEvent,
+  type OrgEvent,
 } from '@edgekits/kernel/events'
+import type { OrgId } from '@edgekits/kernel/tenancy'
 import { seeded, shuffle } from './random.js'
 
 const periodEnd = Date.UTC(2026, 11, 1)
@@ -17,6 +21,7 @@ const fixture: BillingEvent[] = [
     type: 'customer.linked',
     occurredAt: 500,
     providerEventId: 'evt_01',
+    sourceId: 'evt_01:customer.linked',
     orgId: 'A',
     providerCustomerId: 'ctm_1',
   },
@@ -24,6 +29,7 @@ const fixture: BillingEvent[] = [
     type: 'subscription.activated',
     occurredAt: 1000,
     providerEventId: 'evt_02',
+    sourceId: 'evt_02:subscription.activated',
     orgId: 'A',
     plan: 'pro',
     seats: 3,
@@ -34,6 +40,7 @@ const fixture: BillingEvent[] = [
     type: 'subscription.updated',
     occurredAt: 2000,
     providerEventId: 'evt_03',
+    sourceId: 'evt_03:subscription.updated',
     orgId: 'A',
     plan: 'pro',
     seats: 5,
@@ -43,6 +50,7 @@ const fixture: BillingEvent[] = [
     type: 'subscription.updated',
     occurredAt: 2000,
     providerEventId: 'evt_03b',
+    sourceId: 'evt_03b:subscription.updated',
     orgId: 'A',
     plan: 'pro',
     seats: 7,
@@ -52,6 +60,8 @@ const fixture: BillingEvent[] = [
     type: 'invoice.paid',
     occurredAt: 2500,
     providerEventId: 'evt_04',
+    sourceId: 'evt_04:invoice.paid',
+    orgId: 'A',
     amount: 4900,
     currency: 'USD',
   },
@@ -59,30 +69,40 @@ const fixture: BillingEvent[] = [
     type: 'credits.granted',
     occurredAt: 3000,
     providerEventId: 'evt_05',
+    sourceId: 'evt_05:credits.granted',
+    orgId: 'A',
     amount: 500,
   },
   {
     type: 'credits.granted',
     occurredAt: 3000,
     providerEventId: 'evt_05',
+    sourceId: 'evt_05:credits.granted',
+    orgId: 'A',
     amount: 500,
   },
   {
     type: 'credits.consumed',
     occurredAt: 4000,
     providerEventId: 'evt_06',
+    sourceId: 'evt_06:credits.consumed',
+    orgId: 'A',
     amount: 120,
   },
   {
     type: 'subscription.scheduled_cancel',
     occurredAt: 5000,
     providerEventId: 'evt_07',
+    sourceId: 'evt_07:subscription.scheduled_cancel',
+    orgId: 'A',
     effectiveAt: periodEnd,
   },
   {
     type: 'refund.created',
     occurredAt: 6000,
     providerEventId: 'evt_08',
+    sourceId: 'evt_08:refund.created',
+    orgId: 'A',
     amount: 900,
   },
 ]
@@ -149,6 +169,290 @@ describe('EventBus', () => {
     expect(seen).toEqual([
       ['A', 'customer.linked'],
       ['A', 'subscription.activated'],
+    ])
+  })
+})
+
+describe('subscription.created', () => {
+  it('applies like subscription.activated', () => {
+    const common = { occurredAt: 1000, providerEventId: 'evt_c', orgId: 'A' }
+    const payload = { plan: 'pro', seats: 2, periodEnd, trial: true }
+    const created = applySubscriptionEvents([
+      {
+        ...common,
+        ...payload,
+        type: 'subscription.created',
+        sourceId: 'evt_c:subscription.created',
+      },
+    ])
+    const activated = applySubscriptionEvents([
+      {
+        ...common,
+        ...payload,
+        type: 'subscription.activated',
+        sourceId: 'evt_c:subscription.activated',
+      },
+    ])
+    expect(created).toEqual(activated)
+    expect(created.status).toBe('trialing')
+  })
+})
+
+// One sample per KernelEvent type. The mapped type makes the record
+// exhaustive: a member added to KernelEvent without a sample here fails the
+// typecheck.
+type Samples = {
+  [T in KernelEvent['type']]: Extract<KernelEvent, { type: T }>
+}
+const at = 1_700_000_000_000
+const billing = (providerEventId: string, type: BillingEvent['type']) => ({
+  orgId: 'A',
+  occurredAt: at,
+  providerEventId,
+  sourceId: `${providerEventId}:${type}`,
+  type,
+})
+const user = { orgId: 'A', occurredAt: at, actorId: 'user_1' }
+const lifecycle = {
+  orgId: 'A',
+  occurredAt: at,
+  actorId: 'system:lifecycle',
+} as const
+const samples: Samples = {
+  'customer.linked': {
+    ...billing('e1', 'customer.linked'),
+    type: 'customer.linked',
+    providerCustomerId: 'ctm_1',
+  },
+  'subscription.created': {
+    ...billing('e2', 'subscription.created'),
+    type: 'subscription.created',
+    plan: 'pro',
+    seats: 1,
+    periodEnd,
+    trial: false,
+  },
+  'subscription.activated': {
+    ...billing('e3', 'subscription.activated'),
+    type: 'subscription.activated',
+    plan: 'pro',
+    seats: 1,
+    periodEnd,
+    trial: false,
+  },
+  'subscription.updated': {
+    ...billing('e4', 'subscription.updated'),
+    type: 'subscription.updated',
+    plan: 'pro',
+    seats: 2,
+    periodEnd,
+  },
+  'subscription.paused': {
+    ...billing('e5', 'subscription.paused'),
+    type: 'subscription.paused',
+  },
+  'subscription.resumed': {
+    ...billing('e6', 'subscription.resumed'),
+    type: 'subscription.resumed',
+  },
+  'subscription.scheduled_cancel': {
+    ...billing('e7', 'subscription.scheduled_cancel'),
+    type: 'subscription.scheduled_cancel',
+    effectiveAt: periodEnd,
+  },
+  'subscription.canceled': {
+    ...billing('e8', 'subscription.canceled'),
+    type: 'subscription.canceled',
+  },
+  'subscription.past_due': {
+    ...billing('e9', 'subscription.past_due'),
+    type: 'subscription.past_due',
+  },
+  'subscription.expired': {
+    ...billing('e10', 'subscription.expired'),
+    type: 'subscription.expired',
+  },
+  'invoice.paid': {
+    ...billing('e11', 'invoice.paid'),
+    type: 'invoice.paid',
+    amount: 4900,
+    currency: 'USD',
+  },
+  'invoice.failed': {
+    ...billing('e12', 'invoice.failed'),
+    type: 'invoice.failed',
+  },
+  'refund.created': {
+    ...billing('e13', 'refund.created'),
+    type: 'refund.created',
+    amount: 900,
+  },
+  'dispute.opened': {
+    ...billing('e14', 'dispute.opened'),
+    type: 'dispute.opened',
+  },
+  'credits.granted': {
+    ...billing('e15', 'credits.granted'),
+    type: 'credits.granted',
+    amount: 10,
+  },
+  'credits.consumed': {
+    ...billing('e16', 'credits.consumed'),
+    type: 'credits.consumed',
+    amount: 5,
+  },
+  'credits.exhausted': {
+    ...billing('e17', 'credits.exhausted'),
+    type: 'credits.exhausted',
+  },
+  'license.issued': {
+    ...billing('e18', 'license.issued'),
+    type: 'license.issued',
+    key: 'k',
+    productId: 'p',
+  },
+  'org.created': { ...user, sourceId: 'u1', type: 'org.created' },
+  'member.invited': {
+    ...user,
+    sourceId: 'u2',
+    type: 'member.invited',
+    invitationId: 'inv_1',
+    email: 'b@example.com',
+    role: 'member',
+  },
+  'member.joined': {
+    ...user,
+    sourceId: 'u3',
+    type: 'member.joined',
+    userId: 'user_1',
+    memberId: 'mem_1',
+    role: 'member',
+  },
+  'member.role_changed': {
+    ...user,
+    sourceId: 'u4',
+    type: 'member.role_changed',
+    userId: 'user_2',
+    memberId: 'mem_2',
+    role: 'admin',
+    previousRole: 'member',
+  },
+  'member.removed': {
+    ...user,
+    sourceId: 'u5',
+    type: 'member.removed',
+    userId: 'user_2',
+    memberId: 'mem_2',
+  },
+  'member.left': {
+    ...user,
+    sourceId: 'u6',
+    type: 'member.left',
+    userId: 'user_1',
+    memberId: 'mem_1',
+  },
+  'trial.started': {
+    ...lifecycle,
+    sourceId: 'wf:start-trial',
+    type: 'trial.started',
+    plan: 'pro',
+    endsAt: periodEnd,
+  },
+  'trial.subscribed': {
+    ...lifecycle,
+    sourceId: 'wf:close-trial',
+    type: 'trial.subscribed',
+    plan: 'pro',
+  },
+  'trial.expired': {
+    ...lifecycle,
+    sourceId: 'wf:expire-trial',
+    type: 'trial.expired',
+    plan: 'pro',
+  },
+}
+
+describe('KernelEvent', () => {
+  it('each family narrows on type', () => {
+    const family = (event: KernelEvent) => {
+      switch (event.type) {
+        case 'subscription.created':
+          expectTypeOf(event).toExtend<BillingEvent>()
+          expectTypeOf(event.providerEventId).toBeString()
+          expectTypeOf(event.trial).toBeBoolean()
+          return 'billing'
+        case 'member.role_changed':
+          expectTypeOf(event).toExtend<OrgEvent>()
+          expectTypeOf(event.previousRole).toBeString()
+          expectTypeOf(event.actorId).toBeString()
+          return 'org'
+        case 'member.invited':
+          expectTypeOf(event).toExtend<OrgEvent>()
+          expectTypeOf(event.email).toBeString()
+          return 'org'
+        case 'trial.started':
+          expectTypeOf(event).toExtend<LifecycleEvent>()
+          expectTypeOf(event.endsAt).toBeNumber()
+          expectTypeOf(event.actorId).toEqualTypeOf<'system:lifecycle'>()
+          return 'lifecycle'
+        default:
+          return 'other'
+      }
+    }
+    expect(family(samples['subscription.created'])).toBe('billing')
+    expect(family(samples['member.role_changed'])).toBe('org')
+    expect(family(samples['member.invited'])).toBe('org')
+    expect(family(samples['trial.started'])).toBe('lifecycle')
+    expect(family(samples['invoice.paid'])).toBe('other')
+    expectTypeOf<OrgEvent['type']>().toEqualTypeOf<
+      | 'org.created'
+      | 'member.invited'
+      | 'member.joined'
+      | 'member.role_changed'
+      | 'member.removed'
+      | 'member.left'
+    >()
+    expectTypeOf<LifecycleEvent['type']>().toEqualTypeOf<
+      'trial.started' | 'trial.subscribed' | 'trial.expired'
+    >()
+  })
+
+  it('every member carries occurredAt, sourceId and orgId', () => {
+    // At the type level: no member lacks them.
+    expectTypeOf<
+      Exclude<
+        KernelEvent,
+        { occurredAt: number; sourceId: string; orgId: OrgId }
+      >
+    >().toBeNever()
+    // At run time, over one sample of each type (Samples is exhaustive).
+    const all = Object.values(samples) as KernelEvent[]
+    expect(all).toHaveLength(27)
+    for (const event of all) {
+      expect(typeof event.occurredAt, event.type).toBe('number')
+      expect(typeof event.sourceId, event.type).toBe('string')
+      expect(typeof event.orgId, event.type).toBe('string')
+    }
+    expect(new Set(all.map((event) => event.sourceId)).size).toBe(all.length)
+  })
+
+  it('the bus takes every family', async () => {
+    const seen: string[] = []
+    const bus: EventBus = {
+      publish: async (orgId, event) => {
+        seen.push(`${orgId}:${event.type}`)
+      },
+    }
+    await bus.publish('A', samples['subscription.created'])
+    await bus.publish('A', samples['org.created'])
+    await bus.publish('A', samples['trial.expired'])
+    await expect(
+      noopEventBus.publish('A', samples['member.left']),
+    ).resolves.toBeUndefined()
+    expect(seen).toEqual([
+      'A:subscription.created',
+      'A:org.created',
+      'A:trial.expired',
     ])
   })
 })

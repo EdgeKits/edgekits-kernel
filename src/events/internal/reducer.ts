@@ -41,6 +41,7 @@ const byOccurrence = (a: BillingEvent, b: BillingEvent) =>
 
 function apply(state: SubscriptionState, event: BillingEvent) {
   switch (event.type) {
+    case 'subscription.created':
     case 'subscription.activated':
       state.plan = event.plan
       state.seats = event.seats
