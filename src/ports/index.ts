@@ -144,6 +144,12 @@ export interface BillingProvider {
   // Make an archived product or price active again.
   restoreProduct(providerProductId: string): Promise<void>
   restorePrice(providerPriceId: string): Promise<void>
+  // Renames a product (the plan's name changed: AdminRpc updatePlan); the
+  // name is checked by the caller (the catalog's plan name rules).
+  updateProduct(
+    providerProductId: string,
+    patch: { name: string },
+  ): Promise<void>
   reportUsage?(
     ctx: TenantContext,
     meter: string,

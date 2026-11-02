@@ -324,6 +324,10 @@ export const adminShapeD1: [
   >,
   Equal<BlockedError['userId'], string>,
   Equal<OrgDetail['invitations'][number]['expiresAt'], number>,
-] = [true, true, true, true, true, true, true, true, true]
+  Equal<
+    Parameters<BillingProvider['updateProduct']>,
+    [providerProductId: string, patch: { name: string }]
+  >,
+] = [true, true, true, true, true, true, true, true, true, true]
 
 export const claimsTable: typeof orgClaims = orgClaims
