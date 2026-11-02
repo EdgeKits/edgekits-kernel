@@ -11,7 +11,7 @@ import type {
   SubscriptionRecord,
   SuspensionRecord,
 } from '@edgekits/kernel/policy'
-import type { PricePeriod } from '@edgekits/kernel/ports'
+import type { PricePeriod, ProviderTransaction } from '@edgekits/kernel/ports'
 import type {
   AdminId,
   OrgId,
@@ -159,6 +159,13 @@ export interface AdminRpc {
   // The catalog, archived plans included, each with its prices.
   listPlans(admin: AdminContext): Promise<PlanRecord[]>
   getSettings(admin: AdminContext): Promise<SettingRecord[]>
+  // What refundCancel would refund: the org's latest paid transaction at
+  // the provider, or null when it has none (or no open subscription). For
+  // the confirm that names the amount; it writes nothing.
+  previewRefund(
+    admin: AdminContext,
+    orgId: OrgId,
+  ): Promise<ProviderTransaction | null>
 
   // Writes, each with the event it emits.
   // admin.override_set

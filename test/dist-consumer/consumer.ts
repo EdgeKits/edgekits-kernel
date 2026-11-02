@@ -191,6 +191,10 @@ export const adminShape: [
     { url: string; expiresAt: number }
   >,
   Equal<
+    Awaited<ReturnType<AdminRpc['previewRefund']>>,
+    ProviderTransaction | null
+  >,
+  Equal<
     Extract<Decision, { reason: 'suspended' }>,
     { ok: false; reason: 'suspended' }
   >,
@@ -198,7 +202,7 @@ export const adminShape: [
   Equal<AdminEvent['actorId'], `admin:${string}`>,
   Equal<typeof systemOrgId, 'system'>,
   Equal<DenialEntry['status'], 401 | 403 | 404>,
-] = [true, true, true, true, true, true, true, true, true]
+] = [true, true, true, true, true, true, true, true, true, true]
 
 // The env output type survives the declaration boundary.
 const composedEnv = composeEnv([
