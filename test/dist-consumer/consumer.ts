@@ -11,6 +11,7 @@ import {
   type OrgDetail,
   type OrgSummary,
   type Page,
+  type UserSummary,
 } from '@edgekits/kernel/admin'
 import {
   composeEnv,
@@ -86,9 +87,13 @@ import {
   type ProrationMode,
 } from '@edgekits/kernel/ports'
 import {
+  BlockedError,
   ConflictError,
+  createOrgClaim,
+  orgClaims,
   tenantReference,
   tenantTable,
+  type OrgClaimRecord,
   type OrgRecord,
   type TenantDb,
 } from '@edgekits/kernel/tenancy'
@@ -301,3 +306,23 @@ export const mailPort: MailProvider = {
 }
 
 export const eventBus: EventBus = noopEventBus
+
+// P1-10d1: org claims, admin invitations, user block, restorePlan.
+export const adminShapeD1: [
+  Equal<Awaited<ReturnType<AdminRpc['createOrgClaim']>>, OrgClaimRecord>,
+  Equal<Awaited<ReturnType<AdminRpc['listUsers']>>, Page<UserSummary>>,
+  Equal<Awaited<ReturnType<AdminRpc['restorePlan']>>, PlanRecord>,
+  Equal<
+    Awaited<ReturnType<AdminRpc['inviteMember']>>,
+    { invitationId: string }
+  >,
+  Equal<OrgDetail['members'][number]['blockedAt'], number | null>,
+  Equal<Parameters<BillingProvider['restorePrice']>, [providerPriceId: string]>,
+  Equal<
+    Awaited<ReturnType<typeof createOrgClaim>>,
+    { claim: OrgClaimRecord; token: string }
+  >,
+  Equal<BlockedError['userId'], string>,
+] = [true, true, true, true, true, true, true, true]
+
+export const claimsTable: typeof orgClaims = orgClaims

@@ -3,6 +3,7 @@ import { HTTPException } from 'hono/http-exception'
 import { PlanError, PolicyError } from '@edgekits/kernel/policy'
 import { CapabilityError } from '@edgekits/kernel/ports'
 import {
+  BlockedError,
   ConflictError,
   TenancyError,
   type TenantContext,
@@ -71,7 +72,8 @@ const isDenial = (status: number): status is DenialEntry['status'] =>
   status === 401 || status === 403 || status === 404
 
 // For app.onError(): PolicyError to 402 (entitlement, paywall) or 403
-// (forbidden, suspended) with the decision, TenancyError to 404,
+// (forbidden, suspended) with the decision, BlockedError to 403 'blocked'
+// (a blocked user's session, P1-10d), TenancyError to 404,
 // ConflictError to 409, PlanError to 400 with its issues ('invalid') or 404
 // ('not-found'), CapabilityError to 400 with its issues, a Hono
 // HTTPException to its own response, anything else (TenantGuardError
@@ -97,6 +99,10 @@ export function errors(options: ErrorsOptions = {}): ErrorHandler {
           : 402
       report(c, status, decision.reason)
       return c.json({ error: decision.reason, decision }, status)
+    }
+    if (error instanceof BlockedError) {
+      report(c, 403, 'blocked')
+      return c.json({ error: 'blocked' }, 403)
     }
     if (error instanceof TenancyError) {
       report(c, 404, error.reason)

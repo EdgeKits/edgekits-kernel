@@ -432,6 +432,39 @@ export async function archivePlan(
   return plan
 }
 
+// Restores an archived plan (ADR-010 amendment 2026-11-02: archiving is
+// reversible): clears its archivedAt, and that of the prices archived with
+// it (the same archivedAt); a price archived on its own before stays
+// archived. The default flag that archiving cleared is not set again
+// (setDefaultPlan). Restoring a plan that is not archived changes nothing.
+// PlanError('not-found') for an unknown plan. Resolves to the plan with all
+// its prices, for the caller to restore the restored ones at the provider.
+export async function restorePlan(
+  db: TenantDatabase,
+  id: PlanId,
+  now: number = Date.now(),
+): Promise<PlanRecord> {
+  const before = await getPlan(db, id)
+  if (!before) throw new PlanError('not-found')
+  const archivedAt = before.archivedAt
+  if (archivedAt === null) return before
+  await db.batch([
+    db
+      .update(planPrices)
+      .set({ archivedAt: null })
+      .where(
+        and(eq(planPrices.planId, id), eq(planPrices.archivedAt, archivedAt)),
+      ),
+    db
+      .update(plans)
+      .set({ archivedAt: null, updatedAt: now })
+      .where(and(eq(plans.id, id), eq(plans.archivedAt, archivedAt))),
+  ])
+  const plan = await getPlan(db, id)
+  if (!plan) throw new PlanError('not-found')
+  return plan
+}
+
 // Adds a price to a plan that is not archived. ConflictError when the
 // provider already has a price with that id in the catalog.
 export async function addPrice(

@@ -133,13 +133,17 @@ export interface BillingProvider {
   ): Promise<NormalizedSubscription>
   // The catalog (ADR-010): called by the catalog code only (AdminRpc and the
   // seed), never by a page. Each checks the input against the capability
-  // manifest before any provider call. Archiving is the only removal.
+  // manifest before any provider call. Archiving is the only removal, and
+  // it is reversible (ADR-010 amendment 2026-11-02: AdminRpc restorePlan).
   createProduct(
     input: CatalogProductInput,
   ): Promise<{ providerProductId: string }>
   createPrice(input: CatalogPriceInput): Promise<{ providerPriceId: string }>
   archivePrice(providerPriceId: string): Promise<void>
   archiveProduct(providerProductId: string): Promise<void>
+  // Make an archived product or price active again.
+  restoreProduct(providerProductId: string): Promise<void>
+  restorePrice(providerPriceId: string): Promise<void>
   reportUsage?(
     ctx: TenantContext,
     meter: string,

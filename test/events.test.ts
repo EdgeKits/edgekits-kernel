@@ -474,12 +474,76 @@ const samples: Samples = {
     type: 'admin.impersonation_ended',
     userId: 'user_1',
   },
+  'admin.org_claim_created': {
+    ...catalog,
+    sourceId: 'a15',
+    type: 'admin.org_claim_created',
+    claimId: 'claim_1',
+    name: 'Acme',
+    slug: 'acme',
+    email: 'owner@example.com',
+  },
+  'admin.org_claim_canceled': {
+    ...catalog,
+    sourceId: 'a16',
+    type: 'admin.org_claim_canceled',
+    claimId: 'claim_1',
+  },
+  'admin.org_claim_accepted': {
+    ...admin,
+    sourceId: 'a17',
+    type: 'admin.org_claim_accepted',
+    claimId: 'claim_2',
+    userId: 'user_9',
+  },
+  'admin.member_invited': {
+    ...admin,
+    sourceId: 'a18',
+    type: 'admin.member_invited',
+    invitationId: 'inv_9',
+    email: 'c@example.com',
+    role: 'member',
+  },
+  'admin.invitation_canceled': {
+    ...admin,
+    sourceId: 'a19',
+    type: 'admin.invitation_canceled',
+    invitationId: 'inv_9',
+  },
+  'admin.user_blocked': {
+    ...catalog,
+    sourceId: 'a20',
+    type: 'admin.user_blocked',
+    userId: 'user_1',
+    reason: 'spam',
+  },
+  'admin.user_unblocked': {
+    ...catalog,
+    sourceId: 'a21',
+    type: 'admin.user_unblocked',
+    userId: 'user_1',
+  },
+  'admin.plan_restored': {
+    ...catalog,
+    sourceId: 'a22',
+    type: 'admin.plan_restored',
+    plan: 'team',
+  },
 }
 
 describe('KernelEvent', () => {
   it('each family narrows on type', () => {
     const family = (event: KernelEvent) => {
       switch (event.type) {
+        case 'admin.org_claim_created':
+          expectTypeOf(event).toExtend<AdminEvent>()
+          expectTypeOf(event.email).toBeString()
+          expectTypeOf(event.orgId).toEqualTypeOf<'system'>()
+          return 'admin'
+        case 'admin.user_blocked':
+          expectTypeOf(event.userId).toBeString()
+          expectTypeOf(event.reason).toBeString()
+          return 'admin'
         case 'subscription.created':
           expectTypeOf(event).toExtend<BillingEvent>()
           expectTypeOf(event.providerEventId).toBeString()
@@ -508,6 +572,8 @@ describe('KernelEvent', () => {
     expect(family(samples['member.invited'])).toBe('org')
     expect(family(samples['trial.started'])).toBe('lifecycle')
     expect(family(samples['invoice.paid'])).toBe('other')
+    expect(family(samples['admin.org_claim_created'])).toBe('admin')
+    expect(family(samples['admin.user_blocked'])).toBe('admin')
     expectTypeOf<OrgEvent['type']>().toEqualTypeOf<
       | 'org.created'
       | 'member.invited'
@@ -532,7 +598,7 @@ describe('KernelEvent', () => {
     >().toBeNever()
     // At run time, over one sample of each type (Samples is exhaustive).
     const all = Object.values(samples) as KernelEvent[]
-    expect(all).toHaveLength(42)
+    expect(all).toHaveLength(50)
     for (const event of all) {
       expect(typeof event.occurredAt, event.type).toBe('number')
       expect(typeof event.sourceId, event.type).toBe('string')
@@ -553,9 +619,26 @@ describe('KernelEvent', () => {
             | 'admin.plan_updated'
             | 'admin.plan_archived'
             | 'admin.setting_changed'
+            | 'admin.plan_restored'
+            | 'admin.org_claim_created'
+            | 'admin.org_claim_canceled'
+            | 'admin.user_blocked'
+            | 'admin.user_unblocked'
         }
       >['orgId']
     >().toEqualTypeOf<'system'>()
+    // Written under an org: the claim's new org, the invitation's org.
+    expectTypeOf<
+      Extract<
+        AdminEvent,
+        {
+          type:
+            | 'admin.org_claim_accepted'
+            | 'admin.member_invited'
+            | 'admin.invitation_canceled'
+        }
+      >['orgId']
+    >().toEqualTypeOf<string>()
     // A setting's value never travels in its event.
     expectTypeOf<
       Extract<AdminEvent, { type: 'admin.setting_changed' }>
@@ -564,7 +647,7 @@ describe('KernelEvent', () => {
     const admins = (Object.values(samples) as KernelEvent[]).filter((event) =>
       event.type.startsWith('admin.'),
     ) as AdminEvent[]
-    expect(admins).toHaveLength(14)
+    expect(admins).toHaveLength(22)
     for (const event of admins) {
       expect(event.actorId, event.type).toMatch(/^admin:/)
     }

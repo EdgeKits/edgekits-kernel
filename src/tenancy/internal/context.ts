@@ -43,6 +43,19 @@ export class TenancyError extends Error {
   }
 }
 
+// Thrown by the starter's session resolver when the session's user is
+// blocked (P1-10d, ruling 2026-11-02: a blocked user keeps their rows but
+// no sessions). The kernel knows nothing of the auth library's user table;
+// /hono's errors() answers 403 { error: 'blocked' } and reports reason
+// 'blocked' to its denied hook.
+export class BlockedError extends Error {
+  override name = 'BlockedError'
+
+  constructor(readonly userId: UserId) {
+    super('The user is blocked')
+  }
+}
+
 export interface Session {
   readonly userId: UserId
 }

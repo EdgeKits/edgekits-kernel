@@ -35,6 +35,7 @@ export {
   planForPrice,
   planSource,
   priceForPlan,
+  restorePlan,
   setDefaultPlan,
   updatePlan,
   type EntitlementKind,
@@ -74,8 +75,14 @@ export {
 } from './internal/repo.js'
 // Runtime settings (ADR-010): written only by AdminRpc and the seed.
 export {
+  currenciesIssues,
+  currenciesKey,
+  defaultCurrencies,
+  getCurrencies,
   getSetting,
+  setCurrencies,
   setSetting,
+  SettingError,
   setTrialPlan,
   trialPlan,
   trialPlanKey,

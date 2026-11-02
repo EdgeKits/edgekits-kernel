@@ -21,6 +21,7 @@ import {
   type PolicyEngine,
 } from '@edgekits/kernel/policy'
 import {
+  BlockedError,
   ConflictError,
   createTenantContext,
   TenancyError,
@@ -334,6 +335,9 @@ describe('@edgekits/kernel/hono', () => {
       hono.get('/conflict', () => {
         throw new ConflictError('projects')
       })
+      hono.get('/blocked', () => {
+        throw new BlockedError('user-9')
+      })
       hono.get('/boom', () => {
         throw new Error('boom')
       })
@@ -381,6 +385,25 @@ describe('@edgekits/kernel/hono', () => {
           method: 'GET',
           requestId: 'ray-403',
           actor: 'alice',
+        },
+      ])
+    })
+
+    it("403: a blocked user's session, with the reason blocked and no user id", async () => {
+      const { hono, entries } = logged()
+      const res = await hono.request('/blocked', {
+        headers: { 'cf-ray': 'ray-blocked' },
+      })
+      expect(res.status).toBe(403)
+      expect(await res.json()).toEqual({ error: 'blocked' })
+      expect(entries).toEqual([
+        {
+          status: 403,
+          reason: 'blocked',
+          path: '/blocked',
+          method: 'GET',
+          requestId: 'ray-blocked',
+          actor: 'anonymous',
         },
       ])
     })

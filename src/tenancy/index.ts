@@ -2,6 +2,7 @@
 import type { TenantDb } from './internal/repository.js'
 
 export {
+  BlockedError,
   createTenantContext,
   resolveTenant,
   TenancyError,
@@ -9,6 +10,21 @@ export {
   type TenancyDeps,
 } from './internal/context.js'
 export { TenantGuardError, tenantGuardLogger } from './internal/guard.js'
+// Org claims (P1-10d): an org set up by an operator for a person without an
+// account, accepted on that person's first sign-in. Not a tenant table.
+export {
+  acceptOrgClaim,
+  cancelOrgClaim,
+  createOrgClaim,
+  findOpenClaimByToken,
+  getOrgClaim,
+  listOrgClaims,
+  normalizeClaimEmail,
+  orgClaimStatus,
+  orgClaims,
+  type OrgClaimRecord,
+  type OrgClaimStatus,
+} from './internal/claims.js'
 export {
   ConflictError,
   type RepositoryTable,

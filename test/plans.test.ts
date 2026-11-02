@@ -9,6 +9,12 @@ import {
   archivePlan,
   archivePrice,
   createPlan,
+  currenciesIssues,
+  currenciesKey,
+  getCurrencies,
+  setCurrencies,
+  SettingError,
+  restorePlan,
   createPolicyEngine,
   getPlan,
   listPlans,
@@ -370,6 +376,31 @@ describe('archivePlan', () => {
     ).toMatchObject({ reason: 'not-found' })
   })
 
+  it('restorePlan brings back the plan and the prices archived with it', async () => {
+    const id = freshId()
+    await newPlan(id, {
+      prices: [price(`pri_${id}_m`), price(`pri_${id}_y`, { period: 'year' })],
+    })
+    // Archived on its own first: it stays archived.
+    expect(await archivePrice(db, 'paddle', `pri_${id}_y`, 500)).toBe(true)
+    await archivePlan(unguarded, id, 1000)
+    const restored = await restorePlan(db, id, 2000)
+    expect(restored.archivedAt).toBeNull()
+    expect(restored.updatedAt).toBe(2000)
+    expect(
+      Object.fromEntries(restored.prices.map((p) => [p.id, p.archivedAt])),
+    ).toEqual({ [`pri_${id}_m`]: null, [`pri_${id}_y`]: 500 })
+    expect((await listPlans(db)).map((p) => p.id)).toContain(id)
+    expect(await priceForPlan(db, 'paddle', id, 'month')).toMatchObject({
+      id: `pri_${id}_m`,
+    })
+    // Restoring a plan that is not archived changes nothing.
+    expect((await restorePlan(db, id, 3000)).updatedAt).toBe(2000)
+    expect(await reasonOf(() => restorePlan(db, 'no-such'))).toMatchObject({
+      reason: 'not-found',
+    })
+  })
+
   it('a subscription in another org on another plan does not block it', async () => {
     const [id, other] = [freshId(), freshId()]
     await newPlan(id)
@@ -573,6 +604,36 @@ describe('settings and the trial plan', () => {
 
     await setSetting(db, trialPlanKey, 'no-such-plan')
     expect(await trialPlan(db)).toBeNull()
+  })
+
+  it('billing.currencies: the default until set, then only codes the manifest lists', async () => {
+    const manifest = { currencies: ['USD', 'EUR', 'GBP'] }
+    expect(await getCurrencies(db)).toEqual(['USD'])
+    expect(currenciesIssues(['EUR', 'USD'], manifest)).toEqual([])
+    expect(currenciesIssues([], manifest)).toEqual([
+      'empty: name at least one currency',
+    ])
+    expect(currenciesIssues('USD', manifest)).toEqual([
+      'not a list of currency codes',
+    ])
+    expect(currenciesIssues(['usd', 'XYZ', 'EUR', 'EUR'], manifest)).toEqual([
+      '"usd" is no ISO 4217 code',
+      'XYZ is not a currency of the provider',
+      'EUR is listed twice',
+    ])
+    const refused = await setCurrencies(db, ['JPY'], manifest).catch(
+      (error: unknown) => error,
+    )
+    expect(refused).toBeInstanceOf(SettingError)
+    expect(refused).toMatchObject({
+      key: currenciesKey,
+      issues: ['JPY is not a currency of the provider'],
+    })
+    expect(await getSetting(db, currenciesKey)).toBeNull()
+    await setCurrencies(db, ['EUR', 'USD'], manifest)
+    expect(await getCurrencies(db)).toEqual(['EUR', 'USD'])
+    await setSetting(db, currenciesKey, [])
+    expect(await getCurrencies(db)).toEqual(['USD'])
   })
 
   it('setTrialPlan refuses a missing or archived plan before writing', async () => {

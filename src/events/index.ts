@@ -126,10 +126,13 @@ export type LifecycleEvent = KernelEventCommon & {
 
 // What an operator did through AdminRpc (P1-10). The actor is
 // `admin:<adminId>`; adminEmail is the operator's Access email, kept for the
-// log's readability. Catalog and setting events carry orgId 'system'
-// (systemOrgId); admin.setting_changed names the key only, because a
-// setting may hold ids. admin.impersonation_ended is recorded when an
-// impersonation session ends, not by an AdminRpc method. Timestamps are
+// log's readability. Events that belong to no org carry orgId 'system'
+// (systemOrgId): the catalog, settings, org claims before their org exists,
+// and user blocks (a user is not one org's). admin.setting_changed names
+// the key only, because a setting may hold ids. admin.impersonation_ended is
+// recorded when an impersonation session ends, and admin.org_claim_accepted
+// when the claim's person accepts it (under the new org's id, the actor the
+// operator who made the claim), not by an AdminRpc method. Timestamps are
 // epoch milliseconds; amounts are in the currency's minor unit.
 export type AdminEvent = KernelEventCommon & {
   actorId: `admin:${AdminId}`
@@ -163,6 +166,42 @@ export type AdminEvent = KernelEventCommon & {
     | { type: 'admin.setting_changed'; orgId: typeof systemOrgId; key: string }
     | { type: 'admin.impersonated'; userId: UserId; ttlSeconds: number }
     | { type: 'admin.impersonation_ended'; userId: UserId }
+    // Org claims (P1-10d).
+    | {
+        type: 'admin.org_claim_created'
+        orgId: typeof systemOrgId
+        claimId: string
+        name: string
+        slug: string
+        email: string
+      }
+    | {
+        type: 'admin.org_claim_canceled'
+        orgId: typeof systemOrgId
+        claimId: string
+      }
+    | { type: 'admin.org_claim_accepted'; claimId: string; userId: UserId }
+    // Invitations into an existing org, written on its first owner's behalf.
+    | {
+        type: 'admin.member_invited'
+        invitationId: string
+        email: string
+        role: string
+      }
+    | { type: 'admin.invitation_canceled'; invitationId: string }
+    // User blocks: the user keeps their rows but no sessions.
+    | {
+        type: 'admin.user_blocked'
+        orgId: typeof systemOrgId
+        userId: UserId
+        reason: string
+      }
+    | {
+        type: 'admin.user_unblocked'
+        orgId: typeof systemOrgId
+        userId: UserId
+      }
+    | { type: 'admin.plan_restored'; orgId: typeof systemOrgId; plan: PlanId }
   )
 
 export type KernelEvent = BillingEvent | OrgEvent | LifecycleEvent | AdminEvent

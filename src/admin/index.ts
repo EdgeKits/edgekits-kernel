@@ -14,6 +14,8 @@ import type {
 import type { PricePeriod, ProviderTransaction } from '@edgekits/kernel/ports'
 import type {
   AdminId,
+  OrgClaimRecord,
+  OrgClaimStatus,
   OrgId,
   OrgRecord,
   PlanId,
@@ -70,6 +72,19 @@ export interface OrgMember {
   name: string
   role: RoleId
   createdAt: number
+  // When an operator blocked the user (blockUser), null when not blocked.
+  blockedAt: number | null
+}
+
+// A user of the deployment, for the admin's users list.
+export interface UserSummary {
+  id: UserId
+  email: string
+  name: string
+  createdAt: number
+  blockedAt: number | null
+  // The orgs the user is a member of, the personal workspace included.
+  orgCount: number
 }
 
 // One row of an org's audit log (P1-09), newest first in lists. subject is
@@ -143,7 +158,10 @@ export interface CatalogPlanInput {
 }
 
 // A deployment setting (ADR-010), such as billing.trialPlan. value is the
-// setting's JSON value.
+// setting's JSON value. getSettings() reports billing.currencies with its
+// default (['USD'], updatedAt 0) when it is unset, and setSetting() refuses
+// a billing.currencies value that is not a non-empty list of codes in the
+// active provider's manifest (currenciesIssues() in /policy).
 export interface SettingRecord {
   key: string
   value: unknown
@@ -242,4 +260,48 @@ export interface AdminRpc {
     userId: UserId,
     ttlSeconds: number,
   ): Promise<{ url: string; expiresAt: number }>
+
+  // P1-10d (rulings 2026-11-02).
+  // admin.org_claim_created: an org for a person without an account (an
+  // org never exists without an owner). The app derives the slug from the
+  // name, mails the claim's link to email, and creates the org when that
+  // person accepts on their first sign-in (admin.org_claim_accepted). One
+  // open claim per email (409 otherwise); ttlDays defaults to the app's.
+  createOrgClaim(
+    admin: AdminContext,
+    input: { name: string; email: string; ttlDays?: number },
+  ): Promise<OrgClaimRecord>
+  listOrgClaims(
+    admin: AdminContext,
+    query: { status: OrgClaimStatus | 'all' },
+  ): Promise<OrgClaimRecord[]>
+  // admin.org_claim_canceled
+  cancelOrgClaim(admin: AdminContext, claimId: string): Promise<void>
+  // admin.member_invited: an ordinary invitation into an existing org,
+  // written on the org's first owner's behalf (mailed like any other).
+  inviteMember(
+    admin: AdminContext,
+    orgId: OrgId,
+    email: string,
+    role: RoleId,
+  ): Promise<{ invitationId: string }>
+  // admin.invitation_canceled: a pending invitation of the org.
+  cancelInvitation(
+    admin: AdminContext,
+    orgId: OrgId,
+    invitationId: string,
+  ): Promise<void>
+  // Users newest first, 50 a page; q matches the email or the name.
+  listUsers(
+    admin: AdminContext,
+    query: { q?: string; cursor?: string },
+  ): Promise<Page<UserSummary>>
+  // admin.user_blocked: the user keeps their rows but no sessions; their
+  // sessions end and a new one is refused (BlockedError, 403 'blocked').
+  blockUser(admin: AdminContext, userId: UserId, reason: string): Promise<void>
+  // admin.user_unblocked
+  unblockUser(admin: AdminContext, userId: UserId): Promise<void>
+  // admin.plan_restored: the plan, the prices archived with it, and their
+  // product and prices at the provider (restoreProduct, restorePrice).
+  restorePlan(admin: AdminContext, planId: PlanId): Promise<PlanRecord>
 }
