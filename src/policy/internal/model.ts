@@ -34,6 +34,8 @@ export interface SubscriptionRecord {
   provider: string | null
   providerSubscriptionId: string | null
   updatedAt: number
+  // When the subscription or the current kernel trial began.
+  startedAt: number
 }
 
 // A provider's subscription as the billing Workflow writes it, after it has

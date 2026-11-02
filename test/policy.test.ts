@@ -318,6 +318,7 @@ const insertSubscription = (
   ctx.db.repo(subscriptions).insert({
     id: crypto.randomUUID(),
     updatedAt: Date.now(),
+    startedAt: Date.now(),
     ...values,
   })
 
@@ -777,7 +778,7 @@ describe('org suspension', () => {
 describe('kernel trials', () => {
   const engine = createPolicyEngine(blueprint)
 
-  it('startKernelTrial creates one trialing row and refuses a second', async () => {
+  it('startKernelTrial creates one trialing row, startedAt now, and refuses a second while it runs', async () => {
     const ctx = contextFor(freshOrg())
     const now = Date.now()
     const trial = await startKernelTrial(ctx, { plan: 'pro', days: 14, now })
@@ -787,6 +788,8 @@ describe('kernel trials', () => {
       status: 'trialing',
       provider: 'kernel',
       trialEndsAt: now + 14 * DAY,
+      startedAt: now,
+      updatedAt: now,
       orgId: ctx.orgId,
     })
     expect(await engine.entitled(ctx, 'ai')).toEqual({ ok: true })
@@ -796,16 +799,43 @@ describe('kernel trials', () => {
     expect((await loadPolicyRows(ctx)).subscriptions).toHaveLength(1)
   })
 
-  it('startKernelTrial refuses an org that already has a subscription', async () => {
+  it.each(['active', 'trialing'] as const)(
+    'startKernelTrial refuses an org with a %s provider row',
+    async (status) => {
+      const ctx = contextFor(freshOrg())
+      await insertSubscription(ctx, {
+        kind: 'subscription',
+        plan: 'pro',
+        status,
+        provider: 'paddle',
+      })
+      await expect(
+        startKernelTrial(ctx, { plan: 'pro', days: 14 }),
+      ).rejects.toThrow(ConflictError)
+      expect((await loadPolicyRows(ctx)).subscriptions).toHaveLength(1)
+    },
+  )
+
+  it('startKernelTrial starts a trial after a canceled provider subscription', async () => {
     const ctx = contextFor(freshOrg())
     await insertSubscription(ctx, {
       kind: 'subscription',
       plan: 'pro',
       status: 'canceled',
+      provider: 'paddle',
     })
-    await expect(
-      startKernelTrial(ctx, { plan: 'pro', days: 14 }),
-    ).rejects.toThrow(ConflictError)
+    const now = Date.now()
+    const trial = await startKernelTrial(ctx, { plan: 'team', days: 7, now })
+    expect(trial).toMatchObject({
+      id: 'kernel-trial',
+      plan: 'team',
+      status: 'trialing',
+      startedAt: now,
+    })
+    expect(await engine.resolve(ctx)).toMatchObject({
+      plan: 'team',
+      source: 'trial',
+    })
   })
 
   it('startKernelTrial refuses a non-positive or fractional length', async () => {
@@ -876,13 +906,54 @@ describe('kernel trials', () => {
     expect((await loadPolicyRows(ctx)).subscriptions).toEqual([ended])
   })
 
-  it('after endKernelTrial, startKernelTrial refuses: one trial per org', async () => {
+  it('after an expired trial, startKernelTrial writes the one row anew', async () => {
     const ctx = contextFor(freshOrg())
-    await startKernelTrial(ctx, { plan: 'pro', days: 14 })
-    await endKernelTrial(ctx, { reason: 'expired' })
-    await expect(
-      startKernelTrial(ctx, { plan: 'pro', days: 14 }),
-    ).rejects.toThrow(ConflictError)
+    const first = Date.now() - 30 * DAY
+    await startKernelTrial(ctx, { plan: 'pro', days: 14, now: first })
+    await endKernelTrial(ctx, { reason: 'expired', now: first + 14 * DAY })
+    const again = Date.now()
+    const trial = await startKernelTrial(ctx, {
+      plan: 'team',
+      days: 7,
+      now: again,
+    })
+    expect(trial).toMatchObject({
+      id: 'kernel-trial',
+      plan: 'team',
+      status: 'trialing',
+      trialEndsAt: again + 7 * DAY,
+      startedAt: again,
+      updatedAt: again,
+    })
+    expect((await loadPolicyRows(ctx)).subscriptions).toEqual([trial])
+    expect(await setTrialEnd(ctx, again + 9 * DAY)).toBe(true)
+    expect(await endKernelTrial(ctx, { reason: 'expired' })).toBe(true)
+  })
+
+  it('applyProviderSubscription sets startedAt on insert and keeps it on update', async () => {
+    const orgId = freshOrg()
+    const ctx = contextFor(orgId)
+    const record = {
+      provider: 'paddle',
+      providerSubscriptionId: 'sub_started',
+      kind: 'subscription' as const,
+      plan: 'pro',
+      status: 'active' as const,
+      seats: 1,
+      periodEnd: null,
+      trialEndsAt: null,
+      cancelAt: null,
+      updatedAt: 1000,
+    }
+    await applyProviderSubscription(unguarded, orgId, record, 5000)
+    await applyProviderSubscription(
+      unguarded,
+      orgId,
+      { ...record, seats: 2, updatedAt: 2000 },
+      9000,
+    )
+    const [row] = (await loadPolicyRows(ctx)).subscriptions
+    expect(row).toMatchObject({ seats: 2, startedAt: 5000, updatedAt: 2000 })
   })
 
   it('expireTrials flips only kernel trials whose end has passed', async () => {
@@ -964,6 +1035,8 @@ describe('applyProviderSubscription', () => {
         provider: 'paddle',
         providerSubscriptionId: 'sub_01',
         updatedAt: NOW,
+        // The time it was applied, not the provider's change time.
+        startedAt: expect.any(Number),
       },
     ])
   })

@@ -105,8 +105,13 @@ export async function liftSuspension(
 }
 
 // Starts the card-free trial the kernel runs (blueprint billing.trial with
-// requiresCard: false). Refused with ConflictError when the org already has
-// any subscriptions row, trial or not.
+// requiresCard: false, or an admin's AdminRpc startTrial). Refused with
+// ConflictError while any row of the org is active or trialing, whatever its
+// provider. Otherwise the org's one kernel-trial row is written anew: inserted,
+// or, after an earlier kernel trial ended, updated in place (plan, status
+// trialing, trial end, startedAt and updatedAt now). An expired trial or a
+// canceled provider subscription does not stand in the way. The row keeps no
+// history; the audit log does (trial.started, trial.expired, admin.trial_*).
 export async function startKernelTrial(
   ctx: TenantContext,
   options: { plan: PlanId; days: number; now?: number },
@@ -118,18 +123,30 @@ export async function startKernelTrial(
     )
   }
   const repo = ctx.db.repo(subscriptions)
-  if ((await repo.findMany()).length > 0) {
+  const rows = await repo.findMany()
+  if (rows.some((r) => r.status === 'active' || r.status === 'trialing')) {
     throw new ConflictError('subscriptions')
   }
-  return repo.insert({
-    id: kernelTrialId,
-    kind: 'subscription',
+  const values = {
+    kind: 'subscription' as const,
     plan,
-    status: 'trialing',
+    status: 'trialing' as const,
+    seats: 1,
+    periodEnd: null,
     trialEndsAt: now + days * DAY,
+    cancelAt: null,
     provider: kernelProvider,
+    providerSubscriptionId: null,
     updatedAt: now,
-  })
+    startedAt: now,
+  }
+  if (!rows.some((r) => r.id === kernelTrialId)) {
+    return repo.insert({ id: kernelTrialId, ...values })
+  }
+  await repo.update(kernelTrialId, values)
+  const row = await repo.findById(kernelTrialId)
+  if (!row) throw new ConflictError('subscriptions')
+  return row
 }
 
 // Moves the end of the org's kernel trial: extend, shorten, or end it now.
@@ -220,6 +237,7 @@ export async function expireTrials(
 // it (updatedAt), so a late Workflow cannot roll a subscription back. When
 // the record is active or trialing, the same batch ends the org's kernel
 // trial (endKernelTrial(), reason 'subscribed'): the provider has taken over.
+// startedAt is `now` on insert and stays as it is on update.
 // Resolves to true when the provider row was written. Every statement sets
 // or names org_id itself, so it runs on a guarded or an unguarded database
 // handle alike.
@@ -258,6 +276,7 @@ export async function applyProviderSubscription(
       orgId,
       provider,
       providerSubscriptionId,
+      startedAt: now,
     })
     .onConflictDoUpdate({
       target: [subscriptions.orgId, subscriptions.id],

@@ -30,6 +30,10 @@ export const subscriptions = tenantTable('subscriptions', {
   provider: text('provider'),
   providerSubscriptionId: text('provider_subscription_id'),
   updatedAt: integer('updated_at').notNull(),
+  // When this row's subscription or trial began: set on insert, and anew
+  // when a kernel trial restarts (startKernelTrial). The lifecycle instance
+  // of a kernel trial is named by it (one instance per trial).
+  startedAt: integer('started_at').notNull(),
 })
 
 // Per-org overrides set by an admin (ADR-006); id is the entitlement key.
