@@ -30,6 +30,7 @@ const claim = (address: string, now = 1_000_000, ttlMs = 14 * DAY) =>
     slug: 'acme-lab',
     email: address,
     adminId: 'adm-1',
+    adminEmail: 'ops@example.com',
     ttlMs,
     now,
   })
@@ -50,6 +51,7 @@ describe('org claims', () => {
       slug: 'acme-lab',
       email: address,
       adminId: 'adm-1',
+      adminEmail: 'ops@example.com',
       createdAt: 1_000_000,
       expiresAt: 1_000_000 + 14 * DAY,
       acceptedAt: null,
@@ -111,7 +113,6 @@ describe('org claims', () => {
     )
     expect(refused).toBeInstanceOf(ConflictError)
     expect(refused).toMatchObject({ table: 'org_claims' })
-    // An expired claim is still open: it blocks until it is canceled.
     expect(await cancelOrgClaim(db, first.claim.id)).toBe(true)
     const second = await claim(address)
     expect(await acceptOrgClaim(db, second.claim.id, 'org-3', 1_000_001)).toBe(
@@ -121,12 +122,48 @@ describe('org claims', () => {
     expect(orgClaimStatus(third.claim)).toBe('open')
   })
 
+  it("keeps the operator's email for the accepted event, trimmed", async () => {
+    const { claim: created, token } = await createOrgClaim(db, {
+      name: 'Acme',
+      slug: 'acme',
+      email: email(),
+      adminId: 'adm-2',
+      adminEmail: ' ops2@example.com ',
+      ttlMs: DAY,
+      now: 1_000_000,
+    })
+    expect(created.adminEmail).toBe('ops2@example.com')
+    expect(await findOpenClaimByToken(db, token, 1_000_001)).toMatchObject({
+      adminId: 'adm-2',
+      adminEmail: 'ops2@example.com',
+    })
+  })
+
+  it('an expired open claim gives way to a new one for that email', async () => {
+    const address = email()
+    const expired = await claim(address, 1_000_000, DAY)
+    const fresh = await claim(address, 1_000_000 + DAY)
+    expect(await getOrgClaim(db, expired.claim.id)).toMatchObject({
+      canceledAt: 1_000_000 + DAY,
+      acceptedAt: null,
+    })
+    expect(orgClaimStatus(fresh.claim)).toBe('open')
+    // The new claim has not expired: it still blocks a third.
+    await expect(claim(address, 1_000_000 + DAY + 1)).rejects.toBeInstanceOf(
+      ConflictError,
+    )
+    expect(await getOrgClaim(db, fresh.claim.id)).toMatchObject({
+      canceledAt: null,
+    })
+  })
+
   it('refuses an empty field or a ttl that is not positive', async () => {
     const input = {
       name: 'n',
       slug: 's',
       email: email(),
       adminId: 'a',
+      adminEmail: 'ops@example.com',
       ttlMs: DAY,
     }
     for (const bad of [
@@ -134,6 +171,7 @@ describe('org claims', () => {
       { slug: '' },
       { email: ' ' },
       { adminId: '' },
+      { adminEmail: ' ' },
       { ttlMs: 0 },
       { ttlMs: 1.5 },
     ]) {

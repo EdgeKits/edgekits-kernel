@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, isNotNull, isNull, lte, sql } from 'drizzle-orm'
 import {
   integer,
   sqliteTable,
@@ -19,7 +19,8 @@ import { ConflictError, type TenantDatabase } from './repository.js'
 // and references no table of the auth library. The plain token is never
 // stored, only its SHA-256 (hex). Timestamps are epoch milliseconds. At most
 // one open claim (neither accepted nor canceled) per email: the partial
-// unique index below; an expired claim stays open until it is canceled.
+// unique index below. An expired open claim gives way: createOrgClaim
+// cancels it before writing a new one for that email.
 export const orgClaims = sqliteTable(
   'org_claims',
   {
@@ -30,6 +31,9 @@ export const orgClaims = sqliteTable(
     // Lower case, trimmed.
     email: text('email').notNull(),
     adminId: text('admin_id').notNull(),
+    // The operator's Access email, for admin.org_claim_accepted, which is
+    // written when the person accepts, without an operator present.
+    adminEmail: text('admin_email').notNull(),
     tokenHash: text('token_hash').notNull(),
     createdAt: integer('created_at').notNull(),
     expiresAt: integer('expires_at').notNull(),
@@ -54,6 +58,7 @@ export interface OrgClaimRecord {
   slug: string
   email: string
   adminId: AdminId
+  adminEmail: string
   createdAt: number
   expiresAt: number
   acceptedAt: number | null
@@ -67,6 +72,7 @@ const recordColumns = {
   slug: orgClaims.slug,
   email: orgClaims.email,
   adminId: orgClaims.adminId,
+  adminEmail: orgClaims.adminEmail,
   createdAt: orgClaims.createdAt,
   expiresAt: orgClaims.expiresAt,
   acceptedAt: orgClaims.acceptedAt,
@@ -75,7 +81,8 @@ const recordColumns = {
 }
 
 // A claim's status; an open claim past its expiresAt is still 'open' here
-// (findOpenClaimByToken no longer finds it).
+// until a new claim for its email cancels it (findOpenClaimByToken no
+// longer finds it).
 export const orgClaimStatus = (claim: OrgClaimRecord): OrgClaimStatus =>
   claim.acceptedAt !== null
     ? 'accepted'
@@ -108,9 +115,12 @@ function newToken(): string {
 }
 
 // Writes an open claim and returns it with its plain token, which is not
-// kept and cannot be read again (the starter mails it). RangeError for an
-// empty name, slug or email or a ttlMs that is not a positive integer;
-// ConflictError('org_claims') when the email has an open claim already.
+// kept and cannot be read again (the starter mails it). An expired open
+// claim for the same email is canceled first (canceled_at = now), in the
+// same batch. RangeError for an empty name, slug, email, adminId or
+// adminEmail or a ttlMs that is not a positive integer;
+// ConflictError('org_claims') when the email has an open claim that has
+// not expired.
 export async function createOrgClaim(
   db: TenantDatabase,
   input: {
@@ -118,6 +128,7 @@ export async function createOrgClaim(
     slug: string
     email: string
     adminId: AdminId
+    adminEmail: string
     ttlMs: number
     now?: number
   },
@@ -125,8 +136,16 @@ export async function createOrgClaim(
   const name = input.name.trim()
   const slug = input.slug.trim()
   const email = normalizeClaimEmail(input.email)
-  if (name === '' || slug === '' || email === '' || input.adminId === '') {
-    throw new RangeError('createOrgClaim: name, slug, email and adminId')
+  if (
+    name === '' ||
+    slug === '' ||
+    email === '' ||
+    input.adminId === '' ||
+    input.adminEmail.trim() === ''
+  ) {
+    throw new RangeError(
+      'createOrgClaim: name, slug, email, adminId and adminEmail',
+    )
   }
   if (!Number.isSafeInteger(input.ttlMs) || input.ttlMs <= 0) {
     throw new RangeError(
@@ -141,17 +160,24 @@ export async function createOrgClaim(
     slug,
     email,
     adminId: input.adminId,
+    adminEmail: input.adminEmail.trim(),
     createdAt: now,
     expiresAt: now + input.ttlMs,
     acceptedAt: null,
     orgId: null,
     canceledAt: null,
   }
+  const tokenHash = await sha256Hex(token)
   try {
-    await db
-      .insert(orgClaims)
-      .values({ ...claim, tokenHash: await sha256Hex(token) })
-      .run()
+    await db.batch([
+      db
+        .update(orgClaims)
+        .set({ canceledAt: now })
+        .where(
+          and(eq(orgClaims.email, email), open, lte(orgClaims.expiresAt, now)),
+        ),
+      db.insert(orgClaims).values({ ...claim, tokenHash }),
+    ])
   } catch (error) {
     for (let e: unknown = error; e instanceof Error; e = e.cause) {
       if (/UNIQUE constraint failed/.test(e.message)) {
