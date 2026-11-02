@@ -27,6 +27,15 @@ describe('@edgekits/kernel/ports', () => {
       paddleCapabilities,
     )
   })
+
+  it('declares refunds: Paddle true, and the schema requires the key', () => {
+    expect(paddleCapabilities.refunds).toBe(true)
+    const withoutRefunds: Record<string, unknown> = { ...paddleCapabilities }
+    delete withoutRefunds.refunds
+    expect(billingCapabilitiesSchema.safeParse(withoutRefunds).success).toBe(
+      false,
+    )
+  })
 })
 
 describe('catalog price capability checks', () => {

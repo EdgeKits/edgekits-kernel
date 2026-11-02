@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import { env } from 'cloudflare:workers'
 import { Hono } from 'hono'
@@ -8,12 +9,15 @@ import {
   createPolicyEngine,
   endKernelTrial,
   expireTrials,
+  getSuspension,
+  liftSuspension,
   loadPolicyRows,
   PolicyError,
   resolveEntitlements,
   setTrialEnd,
   startKernelTrial,
   subpath,
+  suspendOrg,
   type EntitlementOverrideRecord,
   type EntitlementVocabulary,
   type PlanCatalog,
@@ -32,6 +36,7 @@ import {
 } from '@edgekits/kernel/tenancy'
 import {
   entitlementOverrides,
+  orgSuspensions,
   subscriptions,
 } from '../src/policy/internal/policy.tables.js'
 import { createPolicySql } from './policy-ddl.js'
@@ -578,6 +583,7 @@ describe('createPolicyEngine: resolve()', () => {
       plan: 'pro',
       source: 'override',
       values: { ...plans.pro, seats: 99 },
+      suspended: null,
     })
   })
 
@@ -592,6 +598,7 @@ describe('createPolicyEngine: resolve()', () => {
       plan: 'team',
       source: 'lifetime',
       values: plans.team,
+      suspended: null,
     })
   })
 
@@ -606,6 +613,7 @@ describe('createPolicyEngine: resolve()', () => {
       plan: 'pro',
       source: 'subscription',
       values: plans.pro,
+      suspended: null,
     })
   })
 
@@ -617,6 +625,7 @@ describe('createPolicyEngine: resolve()', () => {
       plan: 'team',
       source: 'trial',
       values: plans.team,
+      suspended: null,
       trialEndsAt: now + 7 * DAY,
     })
   })
@@ -627,6 +636,7 @@ describe('createPolicyEngine: resolve()', () => {
       plan: 'free',
       source: 'default',
       values: plans.free,
+      suspended: null,
     })
   })
 
@@ -636,6 +646,130 @@ describe('createPolicyEngine: resolve()', () => {
       plan: null,
       source: 'none',
       values: {},
+      suspended: null,
+    })
+  })
+})
+
+describe('org suspension', () => {
+  const engine = createPolicyEngine(blueprint)
+  const suspended = { ok: false, reason: 'suspended' } as const
+
+  it('suspendOrg writes the one row; resolve() reports it and keeps the plan', async () => {
+    const ctx = contextFor(freshOrg())
+    await insertSubscription(ctx, {
+      kind: 'subscription',
+      plan: 'pro',
+      status: 'active',
+    })
+    expect(await getSuspension(ctx)).toBeNull()
+    expect((await loadPolicyRows(ctx)).suspension).toBeNull()
+    const record = await suspendOrg(ctx, {
+      reason: 'abuse report',
+      adminId: 'adm-1',
+      now: 1000,
+    })
+    expect(record).toEqual({
+      reason: 'abuse report',
+      adminId: 'adm-1',
+      at: 1000,
+      liftedAt: null,
+    })
+    expect(await getSuspension(ctx)).toEqual(record)
+    expect((await loadPolicyRows(ctx)).suspension).toEqual({
+      reason: 'abuse report',
+      at: 1000,
+    })
+    // A gate in front of the resolver, not a source.
+    expect(await engine.resolve(ctx)).toEqual({
+      plan: 'pro',
+      source: 'subscription',
+      values: plans.pro,
+      suspended: { reason: 'abuse report', at: 1000 },
+    })
+  })
+
+  it('entitled() answers suspended before any limit, even unlimited', async () => {
+    const ctx = contextFor(freshOrg())
+    await insertSubscription(ctx, {
+      kind: 'subscription',
+      plan: 'pro',
+      status: 'active',
+    })
+    expect(await engine.entitled(ctx, 'projects')).toEqual({ ok: true })
+    await suspendOrg(ctx, { reason: 'r', adminId: 'adm-1' })
+    expect(await engine.entitled(ctx, 'projects')).toEqual(suspended)
+    expect(await engine.entitled(ctx, 'ai')).toEqual(suspended)
+    // A key the blueprint does not declare is still a bug.
+    await expect(engine.entitled(ctx, 'nope')).rejects.toThrow(RangeError)
+  })
+
+  it('can() stays role-only (ruled 2026-11-02)', async () => {
+    const ctx = contextFor(freshOrg(), 'viewer')
+    await suspendOrg(ctx, { reason: 'r', adminId: 'adm-1' })
+    expect(engine.can(ctx, 'project.read')).toEqual({ ok: true })
+    expect(engine.can(ctx, 'project.write').ok).toBe(false)
+  })
+
+  it('liftSuspension keeps the row with lifted_at; a later suspension replaces it', async () => {
+    const ctx = contextFor(freshOrg())
+    expect(await liftSuspension(ctx, 500)).toBe(false)
+    await suspendOrg(ctx, { reason: 'first', adminId: 'adm-1', now: 1000 })
+    expect(await liftSuspension(ctx, 2000)).toBe(true)
+    expect(await liftSuspension(ctx, 2500)).toBe(false)
+    expect(await getSuspension(ctx)).toEqual({
+      reason: 'first',
+      adminId: 'adm-1',
+      at: 1000,
+      liftedAt: 2000,
+    })
+    expect((await engine.resolve(ctx)).suspended).toBeNull()
+    expect(await engine.entitled(ctx, 'seats')).toEqual({ ok: true })
+
+    await suspendOrg(ctx, { reason: 'second', adminId: 'adm-2', now: 3000 })
+    expect(await getSuspension(ctx)).toEqual({
+      reason: 'second',
+      adminId: 'adm-2',
+      at: 3000,
+      liftedAt: null,
+    })
+    // Suspending a suspended org replaces the reason too.
+    await suspendOrg(ctx, { reason: 'third', adminId: 'adm-1', now: 4000 })
+    expect((await engine.resolve(ctx)).suspended).toEqual({
+      reason: 'third',
+      at: 4000,
+    })
+    const rows = await unguarded
+      .select()
+      .from(orgSuspensions)
+      .where(eq(orgSuspensions.orgId, ctx.orgId))
+      .all()
+    expect(rows).toHaveLength(1)
+  })
+
+  it("one org's suspension changes nothing for another", async () => {
+    const a = contextFor(freshOrg())
+    const b = contextFor(freshOrg())
+    await suspendOrg(a, { reason: 'r', adminId: 'adm-1' })
+    expect((await engine.resolve(b)).suspended).toBeNull()
+    expect(await engine.entitled(b, 'seats')).toEqual({ ok: true })
+    expect(await getSuspension(b)).toBeNull()
+  })
+
+  it('requireEntitlement throws, and errors() answers 403 with the decision', async () => {
+    const ctx = contextFor(freshOrg())
+    await suspendOrg(ctx, { reason: 'r', adminId: 'adm-1' })
+    const app = new Hono()
+    app.onError(errors({ denied: () => {} }))
+    app.post('/projects', async (c) => {
+      await engine.requireEntitlement(ctx, 'projects')
+      return c.json({ created: true }, 201)
+    })
+    const response = await app.request('/projects', { method: 'POST' })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({
+      error: 'suspended',
+      decision: suspended,
     })
   })
 })

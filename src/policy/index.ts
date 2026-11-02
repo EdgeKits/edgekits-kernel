@@ -7,12 +7,14 @@ export {
   type EntitlementFlags,
   type PolicyEngine,
   type PolicyEngineOptions,
+  type ResolvedPolicy,
 } from './internal/engine.js'
 export { PolicyError } from './internal/errors.js'
 // The policy tables, for a schema package's migrations; queried only through
 // the repositories in this subpath.
 export {
   entitlementOverrides,
+  orgSuspensions,
   planPrices,
   plans,
   settings,
@@ -55,14 +57,19 @@ export {
   type SubscriptionKind,
   type SubscriptionRecord,
   type SubscriptionStatus,
+  type Suspension,
+  type SuspensionRecord,
 } from './internal/model.js'
 export {
   applyProviderSubscription,
   endKernelTrial,
   expireTrials,
+  getSuspension,
+  liftSuspension,
   loadPolicyRows,
   setTrialEnd,
   startKernelTrial,
+  suspendOrg,
   type KernelTrialEnd,
 } from './internal/repo.js'
 // Runtime settings (ADR-010): written only by AdminRpc and the seed.
@@ -102,3 +109,6 @@ export type Decision =
   // The org resolves to no plan: no default plan, subscription or trial
   // (ADR-010's paywall; requirePlan() in /hono).
   | { ok: false; reason: 'paywall' }
+  // An admin suspended the org (P1-10): entitled() and requirePlan() in
+  // /hono answer it before anything else; errors() renders it as 403.
+  | { ok: false; reason: 'suspended' }

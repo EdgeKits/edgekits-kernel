@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { Jwt } from 'hono/utils/jwt'
+import type { DenialEntry } from '@edgekits/kernel/hono'
 import type { AdminId } from '@edgekits/kernel/tenancy'
 import type { AdminContext } from '../index.js'
 
@@ -22,6 +23,10 @@ export interface AccessIdentityOptions {
   // lifetime and refetched when a token names an unknown kid, at most once
   // per 60 seconds per URL.
   fetchJwks?: () => Promise<Jwks>
+  // Receives every 403 this middleware answers (audit F6), in the shape
+  // errors() in /hono reports: it answers before errors() sees anything.
+  // Defaults to one JSON line on console.warn.
+  denied?: (entry: DenialEntry) => void
 }
 
 export type AdminVariables = { admin: AdminContext }
@@ -107,6 +112,9 @@ export function accessIdentity(
   const url = `${issuer}/cdn-cgi/access/certs`
   const jwks = jwksCache(url, options.fetchJwks ?? fetchFrom(url))
   const devIdentity = options.devIdentity
+  const denied =
+    options.denied ??
+    ((entry: DenialEntry) => console.warn(JSON.stringify(entry)))
   if (options.mode === 'dev' && !devIdentity) {
     throw new Error("accessIdentity: mode 'dev' requires devIdentity")
   }
@@ -118,22 +126,37 @@ export function accessIdentity(
       return next()
     }
 
-    const forbidden = () => c.json({ error: 'forbidden' }, 403)
+    // The reason word is the log's; the answer is the same for all.
+    const forbidden = (reason: string) => {
+      try {
+        denied({
+          status: 403,
+          reason,
+          path: c.req.path,
+          method: c.req.method,
+          requestId: request.id,
+          actor: 'anonymous',
+        })
+      } catch {
+        // The log is not the answer.
+      }
+      return c.json({ error: 'forbidden' }, 403)
+    }
     const token = c.req.header('Cf-Access-Jwt-Assertion')
-    if (!token) return forbidden()
+    if (!token) return forbidden('no-token')
     let kid: string | undefined
     try {
       kid = Jwt.decode(token).header.kid
     } catch {
-      return forbidden()
+      return forbidden('malformed-token')
     }
-    if (!kid) return forbidden()
+    if (!kid) return forbidden('no-kid')
     // A JWKS fetch failure is an outage, not a bad token: it propagates.
     let { keys } = await jwks.current()
     if (!keys.some((key) => key.kid === kid)) {
       // Access rotates its signing keys: an unknown kid refetches the JWKS.
       const refetched = jwks.refetch()
-      if (!refetched) return forbidden()
+      if (!refetched) return forbidden('unknown-kid')
       keys = (await refetched).keys
     }
     let payload: Awaited<ReturnType<typeof Jwt.verifyWithJwks>>
@@ -144,7 +167,7 @@ export function accessIdentity(
         verification: { iss: issuer, aud: options.aud },
       })
     } catch {
-      return forbidden()
+      return forbidden('invalid-token')
     }
     // Hono checks exp only when present; Access tokens always carry it.
     if (
@@ -152,7 +175,7 @@ export function accessIdentity(
       typeof payload.sub !== 'string' ||
       typeof payload.email !== 'string'
     ) {
-      return forbidden()
+      return forbidden('missing-claims')
     }
     c.set('admin', {
       admin: { id: payload.sub, email: payload.email },

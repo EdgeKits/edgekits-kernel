@@ -3,6 +3,8 @@ import {
   applySubscriptionEvents,
   noopEventBus,
   subpath,
+  systemOrgId,
+  type AdminEvent,
   type BillingEvent,
   type EventBus,
   type KernelEvent,
@@ -218,6 +220,13 @@ const lifecycle = {
   occurredAt: at,
   actorId: 'system:lifecycle',
 } as const
+const admin = {
+  orgId: 'A',
+  occurredAt: at,
+  actorId: 'admin:adm_1',
+  adminEmail: 'ops@example.com',
+} as const
+const catalog = { ...admin, orgId: systemOrgId }
 const samples: Samples = {
   'customer.linked': {
     ...billing('e1', 'customer.linked'),
@@ -370,6 +379,93 @@ const samples: Samples = {
     type: 'trial.expired',
     plan: 'pro',
   },
+  'admin.override_set': {
+    ...admin,
+    sourceId: 'a1',
+    type: 'admin.override_set',
+    key: 'members',
+    value: 10,
+    reason: 'pilot',
+    expiresAt: periodEnd,
+  },
+  'admin.override_cleared': {
+    ...admin,
+    sourceId: 'a2',
+    type: 'admin.override_cleared',
+    key: 'members',
+  },
+  'admin.suspended': {
+    ...admin,
+    sourceId: 'a3',
+    type: 'admin.suspended',
+    reason: 'abuse report',
+  },
+  'admin.unsuspended': { ...admin, sourceId: 'a4', type: 'admin.unsuspended' },
+  'admin.trial_started': {
+    ...admin,
+    sourceId: 'a5',
+    type: 'admin.trial_started',
+    plan: 'team',
+    endsAt: periodEnd,
+  },
+  'admin.trial_extended': {
+    ...admin,
+    sourceId: 'a6',
+    type: 'admin.trial_extended',
+    endsAt: periodEnd,
+  },
+  'admin.trial_ended': {
+    ...admin,
+    sourceId: 'a7',
+    type: 'admin.trial_ended',
+    reason: 'converted by phone',
+  },
+  'admin.refund_cancel': {
+    ...admin,
+    sourceId: 'a8',
+    type: 'admin.refund_cancel',
+    providerSubscriptionId: 'sub_1',
+    transactionId: 'txn_1',
+    amount: 4900,
+    currency: 'USD',
+  },
+  'admin.plan_created': {
+    ...catalog,
+    sourceId: 'a9',
+    type: 'admin.plan_created',
+    plan: 'team',
+  },
+  'admin.plan_updated': {
+    ...catalog,
+    sourceId: 'a10',
+    type: 'admin.plan_updated',
+    plan: 'team',
+  },
+  'admin.plan_archived': {
+    ...catalog,
+    sourceId: 'a11',
+    type: 'admin.plan_archived',
+    plan: 'team',
+  },
+  'admin.setting_changed': {
+    ...catalog,
+    sourceId: 'a12',
+    type: 'admin.setting_changed',
+    key: 'billing.trialPlan',
+  },
+  'admin.impersonated': {
+    ...admin,
+    sourceId: 'a13',
+    type: 'admin.impersonated',
+    userId: 'user_1',
+    ttlSeconds: 900,
+  },
+  'admin.impersonation_ended': {
+    ...admin,
+    sourceId: 'a14',
+    type: 'admin.impersonation_ended',
+    userId: 'user_1',
+  },
 }
 
 describe('KernelEvent', () => {
@@ -427,13 +523,42 @@ describe('KernelEvent', () => {
     >().toBeNever()
     // At run time, over one sample of each type (Samples is exhaustive).
     const all = Object.values(samples) as KernelEvent[]
-    expect(all).toHaveLength(27)
+    expect(all).toHaveLength(41)
     for (const event of all) {
       expect(typeof event.occurredAt, event.type).toBe('number')
       expect(typeof event.sourceId, event.type).toBe('string')
       expect(typeof event.orgId, event.type).toBe('string')
     }
     expect(new Set(all.map((event) => event.sourceId)).size).toBe(all.length)
+  })
+
+  it('admin events carry the operator, and catalog events the system org', () => {
+    expectTypeOf<AdminEvent['actorId']>().toEqualTypeOf<`admin:${string}`>()
+    expectTypeOf<AdminEvent['adminEmail']>().toBeString()
+    expectTypeOf<
+      Extract<
+        AdminEvent,
+        {
+          type:
+            | 'admin.plan_created'
+            | 'admin.plan_updated'
+            | 'admin.plan_archived'
+            | 'admin.setting_changed'
+        }
+      >['orgId']
+    >().toEqualTypeOf<'system'>()
+    // A setting's value never travels in its event.
+    expectTypeOf<
+      Extract<AdminEvent, { type: 'admin.setting_changed' }>
+    >().not.toHaveProperty('value')
+    expect(systemOrgId).toBe('system')
+    const admins = (Object.values(samples) as KernelEvent[]).filter((event) =>
+      event.type.startsWith('admin.'),
+    ) as AdminEvent[]
+    expect(admins).toHaveLength(14)
+    for (const event of admins) {
+      expect(event.actorId, event.type).toMatch(/^admin:/)
+    }
   })
 
   it('the bus takes every family', async () => {
@@ -446,6 +571,7 @@ describe('KernelEvent', () => {
     await bus.publish('A', samples['subscription.created'])
     await bus.publish('A', samples['org.created'])
     await bus.publish('A', samples['trial.expired'])
+    await bus.publish(systemOrgId, samples['admin.plan_created'])
     await expect(
       noopEventBus.publish('A', samples['member.left']),
     ).resolves.toBeUndefined()
@@ -453,6 +579,7 @@ describe('KernelEvent', () => {
       'A:subscription.created',
       'A:org.created',
       'A:trial.expired',
+      'system:admin.plan_created',
     ])
   })
 })

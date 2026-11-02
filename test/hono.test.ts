@@ -2,9 +2,10 @@ import { drizzle } from 'drizzle-orm/d1'
 import { env } from 'cloudflare:workers'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   errors,
+  type DenialEntry,
   noStore,
   requirePlan,
   sameOrigin,
@@ -14,7 +15,11 @@ import {
   type SessionInfo,
   type TenantVariables,
 } from '@edgekits/kernel/hono'
-import { PolicyError, type PolicyEngine } from '@edgekits/kernel/policy'
+import {
+  PlanError,
+  PolicyError,
+  type PolicyEngine,
+} from '@edgekits/kernel/policy'
 import {
   ConflictError,
   createTenantContext,
@@ -280,6 +285,176 @@ describe('@edgekits/kernel/hono', () => {
     })
   })
 
+  describe('errors(): denial logging (audit F6)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    // A Hono app whose errors() reports into `entries`; /tenant/* runs
+    // behind tenant(), /admin/* with an operator in c.var.admin.
+    function logged() {
+      const entries: DenialEntry[] = []
+      const hono = new Hono<{ Variables: TenantVariables }>()
+      hono.onError(
+        errors({ log: () => {}, denied: (entry) => entries.push(entry) }),
+      )
+      hono.use('/tenant/*', tenantMiddleware)
+      hono.get('/tenant/forbidden', () => {
+        throw new PolicyError({
+          ok: false,
+          reason: 'forbidden',
+          permission: 'billing.write',
+        })
+      })
+      hono.get('/tenant/suspended', () => {
+        throw new PolicyError({ ok: false, reason: 'suspended' })
+      })
+      hono.get('/tenant/paywall', () => {
+        throw new PolicyError({ ok: false, reason: 'paywall' })
+      })
+      hono.use('/admin/*', async (c, next) => {
+        c.set(
+          'admin' as never,
+          {
+            admin: { id: 'adm-1', email: 'ops@example.com' },
+            request: { id: 'req-admin' },
+          } as never,
+        )
+        await next()
+      })
+      hono.post('/admin/plans', () => {
+        throw new PlanError('not-found', [])
+      })
+      hono.get('/login', () => {
+        throw new HTTPException(401, { message: 'sign in' })
+      })
+      hono.get('/org/:id', () => {
+        throw new TenancyError('not-a-member', 'Z')
+      })
+      hono.get('/conflict', () => {
+        throw new ConflictError('projects')
+      })
+      hono.get('/boom', () => {
+        throw new Error('boom')
+      })
+      return { hono, entries }
+    }
+
+    it('401: an HTTPException, anonymous, with the cf-ray request id', async () => {
+      const { hono, entries } = logged()
+      const res = await hono.request('/login?token=secret', {
+        headers: { 'cf-ray': 'ray-401', Authorization: 'Bearer secret' },
+      })
+      expect(res.status).toBe(401)
+      expect(entries).toEqual([
+        {
+          status: 401,
+          reason: 'http-exception',
+          path: '/login',
+          method: 'GET',
+          requestId: 'ray-401',
+          actor: 'anonymous',
+        },
+      ])
+      // The query string, the header values and the body stay out.
+      expect(JSON.stringify(entries)).not.toMatch(/secret|sign in/)
+    })
+
+    it("403: forbidden and suspended, with the tenant's user and request id", async () => {
+      const { hono, entries } = logged()
+      const init = as('alice', { headers: { 'cf-ray': 'ray-403' } })
+      expect((await hono.request('/tenant/forbidden', init)).status).toBe(403)
+      expect((await hono.request('/tenant/suspended', init)).status).toBe(403)
+      expect(entries).toEqual([
+        {
+          status: 403,
+          reason: 'forbidden',
+          path: '/tenant/forbidden',
+          method: 'GET',
+          requestId: 'ray-403',
+          actor: 'alice',
+        },
+        {
+          status: 403,
+          reason: 'suspended',
+          path: '/tenant/suspended',
+          method: 'GET',
+          requestId: 'ray-403',
+          actor: 'alice',
+        },
+      ])
+    })
+
+    it('404: a TenancyError, and a missing plan with the operator', async () => {
+      const { hono, entries } = logged()
+      expect((await hono.request('/org/Z')).status).toBe(404)
+      const res = await hono.request('/admin/plans', { method: 'POST' })
+      expect(res.status).toBe(404)
+      expect(entries).toEqual([
+        {
+          status: 404,
+          reason: 'not-a-member',
+          path: '/org/Z',
+          method: 'GET',
+          requestId: null,
+          actor: 'anonymous',
+        },
+        {
+          status: 404,
+          reason: 'plan-not-found',
+          path: '/admin/plans',
+          method: 'POST',
+          requestId: 'req-admin',
+          actor: 'admin:adm-1',
+        },
+      ])
+    })
+
+    it('reports nothing for 402, 409 and 500', async () => {
+      const { hono, entries } = logged()
+      const paywall = await hono.request('/tenant/paywall', as('alice'))
+      expect(paywall.status).toBe(402)
+      expect((await hono.request('/conflict')).status).toBe(409)
+      expect((await hono.request('/boom')).status).toBe(500)
+      expect(entries).toEqual([])
+    })
+
+    it('defaults to one JSON line on console.warn; a throwing hook keeps the answer', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const plain = new Hono()
+      plain.onError(errors({ log: () => {} }))
+      plain.get('/x', () => {
+        throw new TenancyError('no-such-org', 'Z')
+      })
+      expect((await plain.request('/x')).status).toBe(404)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toEqual({
+        status: 404,
+        reason: 'no-such-org',
+        path: '/x',
+        method: 'GET',
+        requestId: null,
+        actor: 'anonymous',
+      })
+
+      const throwing = new Hono()
+      throwing.onError(
+        errors({
+          log: () => {},
+          denied: () => {
+            throw new Error('log down')
+          },
+        }),
+      )
+      throwing.get('/x', () => {
+        throw new TenancyError('no-such-org', 'Z')
+      })
+      const res = await throwing.request('/x')
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual({ error: 'not-found' })
+    })
+  })
+
   describe('securityHeaders()', () => {
     const appWith = (
       options?: Parameters<typeof securityHeaders>[0],
@@ -490,6 +665,93 @@ describe('@edgekits/kernel/hono', () => {
       expect(page.status).toBe(200)
       const call = await request('/app/projects', { method: 'POST', org: 'B' })
       expect(call.status).toBe(200)
+    })
+
+    describe('a suspended org', () => {
+      // Both orgs suspended: A without a plan, B with pro.
+      const suspendedPolicy = {
+        resolve: async (ctx: { orgId: string }) => ({
+          ...(ctx.orgId === 'A'
+            ? { plan: null, source: 'none', values: {} }
+            : { plan: 'pro', source: 'subscription', values: {} }),
+          suspended: { reason: 'abuse', at: 1000 },
+        }),
+      } as unknown as PolicyEngine
+
+      function gated(allowSuspended?: readonly string[]) {
+        const hono = new Hono<{ Variables: TenantVariables }>()
+        hono.onError(errors({ log: () => {}, denied: () => {} }))
+        hono.use(
+          '/app/*',
+          tenantMiddleware,
+          requirePlan({
+            policy: suspendedPolicy,
+            allow: ['/app/billing', '/app/o/*'],
+            ...(allowSuspended ? { allowSuspended } : {}),
+            billingPath: '/app/billing',
+          }),
+        )
+        hono.all('/app/*', (c) => c.text(`reached ${c.req.path}`))
+        return hono
+      }
+      const call = (
+        hono: Hono<{ Variables: TenantVariables }>,
+        path: string,
+        init: { method?: string; accept?: string; org?: 'B' } = {},
+      ) =>
+        hono.request(
+          path,
+          as('alice', {
+            method: init.method ?? 'GET',
+            headers: {
+              ...(init.accept ? { Accept: init.accept } : {}),
+              ...(init.org ? { Authorization: 'Bearer key-for-B' } : {}),
+            },
+          }),
+        )
+      const refusal = {
+        error: 'suspended',
+        decision: { ok: false, reason: 'suspended' },
+      }
+
+      it('is refused with 403 before the paywall, navigation or call, plan or not', async () => {
+        const hono = gated(['/app/o/*'])
+        const cases: Array<[string, Parameters<typeof call>[2]]> = [
+          ['navigation, no plan', { accept: browser }],
+          ['call, no plan', { method: 'POST' }],
+          ['navigation, pro', { accept: browser, org: 'B' }],
+          ['call, pro', { method: 'POST', org: 'B' }],
+        ]
+        for (const [label, init] of cases) {
+          const res = await call(hono, '/app/projects', init)
+          expect(res.status, label).toBe(403)
+          expect(await res.json()).toEqual(refusal)
+        }
+      })
+
+      it('passes only allowSuspended paths when it is given', async () => {
+        const hono = gated(['/app/o/*', '/app/leave'])
+        const deepLink = await call(hono, '/app/o/acme', { accept: browser })
+        expect(deepLink.status).toBe(200)
+        // On the paywall's list but not on allowSuspended.
+        const billing = await call(hono, '/app/billing', { method: 'POST' })
+        expect(billing.status).toBe(403)
+        // On allowSuspended only: the paywall still applies after it.
+        const leaveNoPlan = await call(hono, '/app/leave', { accept: browser })
+        expect(leaveNoPlan.status).toBe(302)
+        const leavePro = await call(hono, '/app/leave', { org: 'B' })
+        expect(leavePro.status).toBe(200)
+      })
+
+      it('passes the allow paths when allowSuspended is not given', async () => {
+        const hono = gated()
+        for (const path of ['/app/billing', '/app/o/acme']) {
+          const res = await call(hono, path, { method: 'POST' })
+          expect(res.status, path).toBe(200)
+        }
+        const projects = await call(hono, '/app/projects', { org: 'B' })
+        expect(projects.status).toBe(403)
+      })
     })
   })
 })

@@ -43,6 +43,18 @@ export const entitlementOverrides = tenantTable('entitlement_overrides', {
   createdAt: integer('created_at').notNull(),
 })
 
+// An org's suspension by an admin (P1-10): one row per org, id 'current'.
+// Lifting sets lifted_at; a later suspension replaces the row. Written only
+// by suspendOrg() and liftSuspension() in repo.ts (AdminRpc). Timestamps are
+// epoch milliseconds.
+export const orgSuspensions = tenantTable('org_suspensions', {
+  id: text('id'),
+  reason: text('reason').notNull(),
+  adminId: text('admin_id').notNull(),
+  at: integer('at').notNull(),
+  liftedAt: integer('lifted_at'),
+})
+
 // The plan catalog (ADR-010). Not tenant tables: a plan belongs to the
 // deployment, not to an org, and is keyed by its own id. Written only by
 // AdminRpc and the seed, through the functions in plans.ts; read by the

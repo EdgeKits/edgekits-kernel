@@ -141,6 +141,58 @@ describe('@edgekits/kernel/admin', () => {
     expect((await app().request('/', withToken('not.a.jwt'))).status).toBe(403)
   })
 
+  it('reports each 403 through denied, without the token', async () => {
+    const entries: unknown[] = []
+    const hono = app({ denied: (entry) => entries.push(entry) })
+    const signed = (payload: object) => signJwt(keys.privateKey, 'k1', payload)
+    const noEmail: Record<string, unknown> = claims()
+    delete noEmail.email
+    const unsigned = `${encodePart({ alg: 'RS256' })}.${encodePart(claims())}.c2ln`
+    const cases: Array<[string, Record<string, string>]> = [
+      ['no-token', {}],
+      ['malformed-token', { 'Cf-Access-Jwt-Assertion': 'not-a-jwt' }],
+      ['no-kid', { 'Cf-Access-Jwt-Assertion': unsigned }],
+      [
+        'invalid-token',
+        {
+          'Cf-Access-Jwt-Assertion': await signed(
+            claims({ aud: ['another-app'] }),
+          ),
+        },
+      ],
+      ['missing-claims', { 'Cf-Access-Jwt-Assertion': await signed(noEmail) }],
+    ]
+    for (const [, headers] of cases) {
+      const res = await hono.request('/', {
+        headers: { ...headers, 'cf-ray': 'ray-1' },
+      })
+      expect(res.status).toBe(403)
+    }
+    expect(entries).toEqual(
+      cases.map(([reason]) => ({
+        status: 403,
+        reason,
+        path: '/',
+        method: 'GET',
+        requestId: 'ray-1',
+        actor: 'anonymous',
+      })),
+    )
+    expect(JSON.stringify(entries)).not.toMatch(/eyJ|not-a-jwt|c2ln/)
+  })
+
+  it('defaults the denial log to one JSON line on console.warn', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const res = await app().request('/')
+    expect(res.status).toBe(403)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
+      status: 403,
+      reason: 'no-token',
+      actor: 'anonymous',
+    })
+  })
+
   it('uses the dev identity in mode dev and never reads the header', async () => {
     const hono = app({
       mode: 'dev',

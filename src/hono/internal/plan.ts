@@ -9,6 +9,11 @@ export interface RequirePlanOptions {
   // Paths that pass without a plan: exact ('/app/settings/billing'), or a
   // prefix ending in '/*' ('/app/o/*', which also matches '/app/o').
   allow: readonly string[]
+  // Paths that pass for a suspended org, in the same form. Defaults to
+  // allow. Keep what a member needs to leave the org: sign-out, Better
+  // Auth's endpoints (sign-out, set-active) and any deep link that switches
+  // org; leave out what buys or changes a plan (checkout, plan change).
+  allowSuspended?: readonly string[]
   // Where a navigation without a plan is sent.
   billingPath: string
 }
@@ -48,21 +53,32 @@ function allowed(path: string, allow: readonly string[]): boolean {
   })
 }
 
-// ADR-010's paywall, mounted after tenant(): when the org resolves to no
-// plan (no default plan, subscription or trial), a navigation is redirected
-// 302 to billingPath and any other request is refused with a PolicyError
-// 'paywall', which errors() renders as 402 { error: 'paywall', decision }.
-// Paths in allow pass, as does every org with a plan.
+// ADR-010's paywall and the admin's suspension (P1-10), mounted after
+// tenant(). A suspended org is refused first, navigation or not, with a
+// PolicyError 'suspended', which errors() renders as 403 { error:
+// 'suspended', decision }; paths in allowSuspended pass. Then, when the org
+// resolves to no plan (no default plan, subscription or trial), a
+// navigation is redirected 302 to billingPath and any other request is
+// refused with a PolicyError 'paywall', which errors() renders as 402
+// { error: 'paywall', decision }. Paths in allow pass, as does every org with
+// a plan.
 export function requirePlan(
   options: RequirePlanOptions,
 ): MiddlewareHandler<{ Variables: TenantVariables }> {
   const { policy, allow, billingPath } = options
+  const allowSuspended = options.allowSuspended ?? allow
   return createMiddleware<{ Variables: TenantVariables }>(async (c, next) => {
-    if (allowed(c.req.path, allow)) return next()
+    const path = c.req.path
+    const passesPaywall = allowed(path, allow)
+    const passesSuspension = allowed(path, allowSuspended)
+    if (passesPaywall && passesSuspension) return next()
     const ctx = c.var.tenant
     if (!ctx) throw new Error('requirePlan() runs after tenant()')
-    const { plan } = await policy.resolve(ctx)
-    if (plan !== null) return next()
+    const { plan, suspended } = await policy.resolve(ctx)
+    if (suspended && !passesSuspension) {
+      throw new PolicyError({ ok: false, reason: 'suspended' })
+    }
+    if (passesPaywall || plan !== null) return next()
     if (isNavigation(c.req.method, c.req.header('Accept'))) {
       return c.redirect(billingPath, 302)
     }

@@ -2,6 +2,7 @@
 import { z } from 'zod'
 import type {
   BillingEvent,
+  Currency,
   InboundEvent,
   ProviderId,
 } from '@edgekits/kernel/events'
@@ -35,6 +36,9 @@ export const billingCapabilitiesSchema = z.strictObject({
   multiItem: z.boolean(),
   licenseKeys: z.boolean(),
   credits: z.boolean(),
+  // The provider refunds a paid transaction through its API
+  // (BillingProvider.refund()).
+  refunds: z.boolean(),
 })
 export type BillingCapabilities = z.infer<typeof billingCapabilitiesSchema>
 
@@ -75,6 +79,23 @@ export interface CatalogPriceInput {
   trialDays?: number
 }
 
+// A refund of one paid transaction. amount is in the currency's minor unit;
+// without it the whole transaction is refunded. reason is kept by the
+// provider for its records.
+export interface RefundInput {
+  transactionId: string
+  amount?: number
+  reason: string
+}
+
+// The org's most recent paid transaction at the provider. amount is in the
+// currency's minor unit.
+export interface ProviderTransaction {
+  id: string
+  amount: number
+  currency: Currency
+}
+
 export interface BillingProvider {
   readonly id: ProviderId
   readonly capabilities: BillingCapabilities
@@ -98,6 +119,15 @@ export interface BillingProvider {
   cancel(ctx: TenantContext, when: 'period-end' | 'now'): Promise<void>
   // Removes a scheduled cancellation, so the subscription renews.
   keep(ctx: TenantContext): Promise<void>
+  // Requests a refund of one of the org's transactions (AdminRpc's
+  // refundCancel, then cancel('now')). The provider may approve it later;
+  // resolves to the provider's id for the refund request.
+  refund(
+    ctx: TenantContext,
+    input: RefundInput,
+  ): Promise<{ adjustmentId: string }>
+  // The org's most recent paid transaction, or null when it has none.
+  latestTransaction(ctx: TenantContext): Promise<ProviderTransaction | null>
   fetchSubscription(
     providerSubscriptionId: string,
   ): Promise<NormalizedSubscription>

@@ -11,8 +11,14 @@ import {
   type EntitlementOverrideRecord,
   type ProviderSubscriptionRecord,
   type SubscriptionRecord,
+  type Suspension,
+  type SuspensionRecord,
 } from './model.js'
-import { entitlementOverrides, subscriptions } from './policy.tables.js'
+import {
+  entitlementOverrides,
+  orgSuspensions,
+  subscriptions,
+} from './policy.tables.js'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -20,15 +26,82 @@ const DAY = 24 * 60 * 60 * 1000
 // refuses a second one even when two starts race.
 const kernelTrialId = 'kernel-trial'
 
+// The org's rows the policy engine decides on: subscriptions, overrides and
+// the suspension in force (null when there is none or it was lifted).
 export async function loadPolicyRows(ctx: TenantContext): Promise<{
   subscriptions: SubscriptionRecord[]
   overrides: EntitlementOverrideRecord[]
+  suspension: Suspension | null
 }> {
-  const [subscriptionRows, overrideRows] = await Promise.all([
+  const [subscriptionRows, overrideRows, suspension] = await Promise.all([
     ctx.db.repo(subscriptions).findMany(),
     ctx.db.repo(entitlementOverrides).findMany(),
+    getSuspension(ctx),
   ])
-  return { subscriptions: subscriptionRows, overrides: overrideRows }
+  return {
+    subscriptions: subscriptionRows,
+    overrides: overrideRows,
+    suspension:
+      suspension && suspension.liftedAt === null
+        ? { reason: suspension.reason, at: suspension.at }
+        : null,
+  }
+}
+
+// The id of an org's one suspension row.
+const suspensionId = 'current'
+
+// The org's suspension row, lifted or not, or null when it was never
+// suspended.
+export async function getSuspension(
+  ctx: TenantContext,
+): Promise<SuspensionRecord | null> {
+  const row = await ctx.db.repo(orgSuspensions).findById(suspensionId)
+  return row
+    ? {
+        reason: row.reason,
+        adminId: row.adminId,
+        at: row.at,
+        liftedAt: row.liftedAt,
+      }
+    : null
+}
+
+// Suspends the org (AdminRpc): writes its one suspension row, replacing an
+// earlier one, lifted or not, with this reason, admin and time. The policy
+// engine then answers 'suspended' (entitled(), requirePlan() in /hono).
+export async function suspendOrg(
+  ctx: TenantContext,
+  options: { reason: string; adminId: string; now?: number },
+): Promise<SuspensionRecord> {
+  const values = {
+    reason: options.reason,
+    adminId: options.adminId,
+    at: options.now ?? Date.now(),
+    liftedAt: null,
+  }
+  const repo = ctx.db.repo(orgSuspensions)
+  try {
+    await repo.insert({ id: suspensionId, ...values })
+  } catch (error) {
+    // The org has a row already: this suspension replaces it.
+    if (!(error instanceof ConflictError)) throw error
+    await repo.update(suspensionId, values)
+  }
+  return values
+}
+
+// Lifts the org's suspension (AdminRpc): sets lifted_at and keeps the row.
+// Resolves to true when a suspension was in force, false otherwise (a
+// no-op).
+export async function liftSuspension(
+  ctx: TenantContext,
+  now: number = Date.now(),
+): Promise<boolean> {
+  const repo = ctx.db.repo(orgSuspensions)
+  const row = await repo.findById(suspensionId)
+  if (!row || row.liftedAt !== null) return false
+  return (await repo.update(suspensionId, { liftedAt: now })) === 1
 }
 
 // Starts the card-free trial the kernel runs (blueprint billing.trial with

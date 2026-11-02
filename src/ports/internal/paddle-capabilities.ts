@@ -61,4 +61,8 @@ export const paddleCapabilities: BillingCapabilities = {
   licenseKeys: false,
   // get-started/how-paddle-works/ai-companies: no native credit wallet.
   credits: false,
+  // build/transactions/create-transaction-adjustments: a refund is an
+  // adjustment with action 'refund' on a completed transaction (POST
+  // /adjustments); Paddle approves or rejects it.
+  refunds: true,
 }

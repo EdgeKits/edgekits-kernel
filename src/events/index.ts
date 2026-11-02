@@ -1,6 +1,6 @@
-// The kit's event vocabulary (KernelEvent: billing, organization and
-// lifecycle events), InboundEvent and the EventBus.
-import type { OrgId, PlanId } from '@edgekits/kernel/tenancy'
+// The kit's event vocabulary (KernelEvent: billing, organization,
+// lifecycle and admin events), InboundEvent and the EventBus.
+import type { AdminId, OrgId, PlanId, UserId } from '@edgekits/kernel/tenancy'
 
 export {
   applySubscriptionEvents,
@@ -26,9 +26,15 @@ export interface KernelEventCommon {
 }
 
 // Who caused an event, as `actorId: string`: a user id, `system:<module>`
-// for the kit itself (such as 'system:lifecycle'), or `provider:<id>` for a
-// billing provider (such as 'provider:paddle'). Billing events carry no
-// actorId: their actor is the provider that sent them.
+// for the kit itself (such as 'system:lifecycle'), `admin:<adminId>` for an
+// operator acting through AdminRpc (such as 'admin:<Access sub>'), or
+// `provider:<id>` for a billing provider (such as 'provider:paddle'). Billing
+// events carry no actorId: their actor is the provider that sent them.
+
+// The reserved org id of events that belong to no org: the deployment's
+// plan catalog and settings (admin.plan_*, admin.setting_changed). No org
+// can have it; a subscriber records such events under this id.
+export const systemOrgId = 'system' as const
 
 // Billing events also carry the provider's event id; with occurredAt it
 // orders events and identifies duplicates in the reducer. Their sourceId is
@@ -112,7 +118,46 @@ export type LifecycleEvent = KernelEventCommon & {
     | { type: 'trial.expired'; plan: PlanId }
   )
 
-export type KernelEvent = BillingEvent | OrgEvent | LifecycleEvent
+// What an operator did through AdminRpc (P1-10). The actor is
+// `admin:<adminId>`; adminEmail is the operator's Access email, kept for the
+// log's readability. Catalog and setting events carry orgId 'system'
+// (systemOrgId); admin.setting_changed names the key only, because a
+// setting may hold ids. admin.impersonation_ended is recorded when an
+// impersonation session ends, not by an AdminRpc method. Timestamps are
+// epoch milliseconds; amounts are in the currency's minor unit.
+export type AdminEvent = KernelEventCommon & {
+  actorId: `admin:${AdminId}`
+  adminEmail: string
+} & (
+    | {
+        type: 'admin.override_set'
+        key: string
+        value: number | boolean
+        reason: string
+        expiresAt?: number
+      }
+    | { type: 'admin.override_cleared'; key: string }
+    | { type: 'admin.suspended'; reason: string }
+    | { type: 'admin.unsuspended' }
+    | { type: 'admin.trial_started'; plan: PlanId; endsAt: number }
+    | { type: 'admin.trial_extended'; endsAt: number }
+    | { type: 'admin.trial_ended'; reason: string }
+    | {
+        type: 'admin.refund_cancel'
+        providerSubscriptionId: string
+        transactionId: string
+        amount: number
+        currency: Currency
+      }
+    | { type: 'admin.plan_created'; orgId: typeof systemOrgId; plan: PlanId }
+    | { type: 'admin.plan_updated'; orgId: typeof systemOrgId; plan: PlanId }
+    | { type: 'admin.plan_archived'; orgId: typeof systemOrgId; plan: PlanId }
+    | { type: 'admin.setting_changed'; orgId: typeof systemOrgId; key: string }
+    | { type: 'admin.impersonated'; userId: UserId; ttlSeconds: number }
+    | { type: 'admin.impersonation_ended'; userId: UserId }
+  )
+
+export type KernelEvent = BillingEvent | OrgEvent | LifecycleEvent | AdminEvent
 
 export interface InboundEvent<T = unknown> {
   // Dedupe key.

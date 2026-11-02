@@ -4,6 +4,7 @@ import type { Decision, EntitlementKey, Permission } from '../index.js'
 import { PolicyError } from './errors.js'
 import type { EntitlementVocabulary, PlanSource } from './plans/repo.js'
 import { loadPolicyRows } from './repo.js'
+import type { Suspension } from './model.js'
 import { resolveEntitlements, type ResolvedEntitlements } from './resolver.js'
 
 // The live count behind a numeric entitlement, such as the org's projects.
@@ -26,11 +27,22 @@ export interface EntitlementFlags {
   getBooleanValue(key: EntitlementKey, fallback: boolean): boolean
 }
 
+// What resolve() answers: the resolver's plan, source and values, and the
+// org's suspension in force, which gates them without being a source.
+export type ResolvedPolicy = ResolvedEntitlements & {
+  suspended: Suspension | null
+}
+
 export interface PolicyEngine {
   // The org's plan, its source and the entitlement values, as the resolver
-  // gives them now (plan null: no source grants one).
-  resolve(ctx: TenantContext): Promise<ResolvedEntitlements>
+  // gives them now (plan null: no source grants one), and its suspension.
+  resolve(ctx: TenantContext): Promise<ResolvedPolicy>
+  // The role's permissions only: synchronous, reads no rows, and does not
+  // see a suspension (ruled 2026-11-02). A suspended org is stopped by
+  // entitled() and by requirePlan() in /hono.
   can(ctx: TenantContext, permission: Permission): Decision
+  // 'suspended' before any other answer (after the vocabulary check, which
+  // throws for a key the blueprint does not declare).
   entitled(
     ctx: TenantContext,
     key: EntitlementKey,
@@ -63,9 +75,15 @@ export function createPolicyEngine(options: PolicyEngineOptions): PolicyEngine {
   }
   const counters = options.counters ?? {}
 
-  const resolve = async (ctx: TenantContext): Promise<ResolvedEntitlements> => {
+  // The suspension is a gate in front of the resolver, not a source: the
+  // resolver's input and answer stay as they are.
+  const resolve = async (ctx: TenantContext): Promise<ResolvedPolicy> => {
     const [catalog, rows] = await Promise.all([plans(), loadPolicyRows(ctx)])
-    return resolveEntitlements({ ...catalog, ...rows, now: Date.now() })
+    const { suspension, ...sources } = rows
+    return {
+      ...resolveEntitlements({ ...catalog, ...sources, now: Date.now() }),
+      suspended: suspension,
+    }
   }
   const count = async (ctx: TenantContext, key: EntitlementKey) =>
     (await counters[key]?.(ctx)) ?? 0
@@ -88,7 +106,8 @@ export function createPolicyEngine(options: PolicyEngineOptions): PolicyEngine {
           `entitled: ${key} is not in the blueprint's entitlements`,
         )
       }
-      const { values } = await resolve(ctx)
+      const { values, suspended } = await resolve(ctx)
+      if (suspended) return { ok: false, reason: 'suspended' }
       const value = Object.hasOwn(values, key) ? values[key] : undefined
       if (typeof value === 'boolean') {
         return value

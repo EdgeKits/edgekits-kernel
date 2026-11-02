@@ -55,6 +55,20 @@ export interface ProviderSubscriptionRecord {
   updatedAt: number
 }
 
+// An org's suspension row (P1-10); liftedAt is null while it is in force.
+export interface SuspensionRecord {
+  reason: string
+  adminId: string
+  at: number
+  liftedAt: number | null
+}
+
+// A suspension in force, as the policy engine reports it.
+export interface Suspension {
+  reason: string
+  at: number
+}
+
 // One override per entitlement key and org (ADR-006): id is the key.
 export interface EntitlementOverrideRecord {
   id: string

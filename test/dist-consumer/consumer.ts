@@ -3,7 +3,14 @@
 // this file and every dist .d.ts with skipLibCheck off. Never executed.
 import { text } from 'drizzle-orm/sqlite-core'
 import { toLocals } from '@edgekits/kernel/astro'
-import { accessIdentity } from '@edgekits/kernel/admin'
+import {
+  accessIdentity,
+  type AdminContext,
+  type AdminRpc,
+  type OrgDetail,
+  type OrgSummary,
+  type Page,
+} from '@edgekits/kernel/admin'
 import {
   composeEnv,
   defaultRoles,
@@ -17,9 +24,17 @@ import {
 import {
   applySubscriptionEvents,
   noopEventBus,
+  systemOrgId,
+  type AdminEvent,
   type EventBus,
 } from '@edgekits/kernel/events'
-import { errors, securityHeaders, tenant } from '@edgekits/kernel/hono'
+import {
+  errors,
+  logDenial,
+  securityHeaders,
+  tenant,
+  type DenialEntry,
+} from '@edgekits/kernel/hono'
 import {
   addPrice,
   applyProviderSubscription,
@@ -30,8 +45,11 @@ import {
   entitlementOverrides,
   expireTrials,
   getPlan,
+  getSuspension,
+  liftSuspension,
   listPlans,
   loadPolicyRows,
+  orgSuspensions,
   PlanError,
   planForPrice,
   planInputIssues,
@@ -45,20 +63,25 @@ import {
   setTrialEnd,
   startKernelTrial,
   subscriptions,
+  suspendOrg,
   updatePlan,
+  type Decision,
   type EntitlementSource,
   type PlanRecord,
   type PlanSource,
   type PolicyEngine,
   type ResolvedEntitlements,
+  type ResolvedPolicy,
 } from '@edgekits/kernel/policy'
 import {
   assertPriceSupported,
   CapabilityError,
   paddleCapabilities,
   type BillingProvider,
+  type BillingCapabilities,
   type CatalogPriceInput,
   type MailProvider,
+  type ProviderTransaction,
   type ProrationMode,
 } from '@edgekits/kernel/ports'
 import {
@@ -150,7 +173,32 @@ export const portShape: [
   Equal<Awaited<ReturnType<Port['createPrice']>>, { providerPriceId: string }>,
   Equal<Parameters<Port['archivePrice']>, [providerPriceId: string]>,
   Equal<Parameters<Port['keep']>[0], Parameters<Port['portalUrl']>[0]>,
-] = [true, true, true, true, true, true, true, true]
+  Equal<Awaited<ReturnType<Port['refund']>>, { adjustmentId: string }>,
+  Equal<
+    Awaited<ReturnType<Port['latestTransaction']>>,
+    ProviderTransaction | null
+  >,
+  Equal<BillingCapabilities['refunds'], boolean>,
+] = [true, true, true, true, true, true, true, true, true, true, true]
+
+// P1-10a: the admin contract, the suspension decision and the denial log.
+export const adminShape: [
+  Equal<Parameters<AdminRpc['getOrg']>, [admin: AdminContext, orgId: string]>,
+  Equal<Awaited<ReturnType<AdminRpc['listOrgs']>>, Page<OrgSummary>>,
+  Equal<Awaited<ReturnType<AdminRpc['getOrg']>>, OrgDetail>,
+  Equal<
+    Awaited<ReturnType<AdminRpc['impersonate']>>,
+    { url: string; expiresAt: number }
+  >,
+  Equal<
+    Extract<Decision, { reason: 'suspended' }>,
+    { ok: false; reason: 'suspended' }
+  >,
+  Equal<ResolvedPolicy['suspended'], { reason: string; at: number } | null>,
+  Equal<AdminEvent['actorId'], `admin:${string}`>,
+  Equal<typeof systemOrgId, 'system'>,
+  Equal<DenialEntry['status'], 401 | 403 | 404>,
+] = [true, true, true, true, true, true, true, true, true]
 
 // The env output type survives the declaration boundary.
 const composedEnv = composeEnv([
@@ -174,6 +222,7 @@ export const policyTables = [
   entitlementOverrides,
   plans,
   planPrices,
+  orgSuspensions,
 ] as const
 
 export const subpathExports = [
@@ -188,7 +237,11 @@ export const subpathExports = [
   defaultRoles,
   applyProviderSubscription,
   expireTrials,
+  getSuspension,
+  liftSuspension,
   loadPolicyRows,
+  suspendOrg,
+  logDenial,
   setTrialEnd,
   startKernelTrial,
   addPrice,
