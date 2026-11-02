@@ -76,6 +76,17 @@ export interface OrgMember {
   blockedAt: number | null
 }
 
+// A pending invitation of an org that has not expired, the members' own or
+// an operator's (inviteMember); invitedBy is the inviting user's id.
+export interface OrgInvitation {
+  id: string
+  email: string
+  role: RoleId
+  invitedBy: UserId
+  createdAt: number
+  expiresAt: number
+}
+
 // A user of the deployment, for the admin's users list.
 export interface UserSummary {
   id: UserId
@@ -112,6 +123,8 @@ export type UserNames = Record<UserId, string>
 
 export interface OrgDetail extends OrgSummary {
   members: OrgMember[]
+  // Pending invitations that have not expired, oldest first (P1-10d).
+  invitations: OrgInvitation[]
   // The provider subscription the plan comes from, or null.
   subscription: SubscriptionRecord | null
   // Each key's value and where it comes from: 'override' when an admin

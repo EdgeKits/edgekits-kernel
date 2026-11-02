@@ -323,6 +323,7 @@ export const adminShapeD1: [
     { claim: OrgClaimRecord; token: string }
   >,
   Equal<BlockedError['userId'], string>,
-] = [true, true, true, true, true, true, true, true]
+  Equal<OrgDetail['invitations'][number]['expiresAt'], number>,
+] = [true, true, true, true, true, true, true, true, true]
 
 export const claimsTable: typeof orgClaims = orgClaims
