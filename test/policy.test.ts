@@ -672,6 +672,7 @@ describe('org suspension', () => {
     })
     expect(record).toEqual({
       reason: 'abuse report',
+      message: null,
       adminId: 'adm-1',
       at: 1000,
       liftedAt: null,
@@ -679,6 +680,7 @@ describe('org suspension', () => {
     expect(await getSuspension(ctx)).toEqual(record)
     expect((await loadPolicyRows(ctx)).suspension).toEqual({
       reason: 'abuse report',
+      message: null,
       at: 1000,
     })
     // A gate in front of the resolver, not a source.
@@ -686,8 +688,33 @@ describe('org suspension', () => {
       plan: 'pro',
       source: 'subscription',
       values: plans.pro,
-      suspended: { reason: 'abuse report', at: 1000 },
+      suspended: { reason: 'abuse report', message: null, at: 1000 },
     })
+  })
+
+  it('keeps the members message apart from the note; empty is null', async () => {
+    const ctx = contextFor(freshOrg())
+    await suspendOrg(ctx, {
+      reason: 'chargeback 4411',
+      message: 'Billing is on hold. Write to billing@example.com.',
+      adminId: 'adm-1',
+      now: 1000,
+    })
+    expect(await getSuspension(ctx)).toEqual({
+      reason: 'chargeback 4411',
+      message: 'Billing is on hold. Write to billing@example.com.',
+      adminId: 'adm-1',
+      at: 1000,
+      liftedAt: null,
+    })
+    expect((await engine.resolve(ctx)).suspended).toEqual({
+      reason: 'chargeback 4411',
+      message: 'Billing is on hold. Write to billing@example.com.',
+      at: 1000,
+    })
+    // A later suspension without one clears it.
+    await suspendOrg(ctx, { reason: 'r', message: '', adminId: 'adm-1' })
+    expect((await getSuspension(ctx))?.message).toBeNull()
   })
 
   it('entitled() answers suspended before any limit, even unlimited', async () => {
@@ -720,6 +747,7 @@ describe('org suspension', () => {
     expect(await liftSuspension(ctx, 2500)).toBe(false)
     expect(await getSuspension(ctx)).toEqual({
       reason: 'first',
+      message: null,
       adminId: 'adm-1',
       at: 1000,
       liftedAt: 2000,
@@ -730,6 +758,7 @@ describe('org suspension', () => {
     await suspendOrg(ctx, { reason: 'second', adminId: 'adm-2', now: 3000 })
     expect(await getSuspension(ctx)).toEqual({
       reason: 'second',
+      message: null,
       adminId: 'adm-2',
       at: 3000,
       liftedAt: null,
@@ -738,6 +767,7 @@ describe('org suspension', () => {
     await suspendOrg(ctx, { reason: 'third', adminId: 'adm-1', now: 4000 })
     expect((await engine.resolve(ctx)).suspended).toEqual({
       reason: 'third',
+      message: null,
       at: 4000,
     })
     const rows = await unguarded

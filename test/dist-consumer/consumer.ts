@@ -7,6 +7,7 @@ import {
   accessIdentity,
   type AdminContext,
   type AdminRpc,
+  type ActivityPage,
   type OrgDetail,
   type OrgSummary,
   type Page,
@@ -198,11 +199,37 @@ export const adminShape: [
     Extract<Decision, { reason: 'suspended' }>,
     { ok: false; reason: 'suspended' }
   >,
-  Equal<ResolvedPolicy['suspended'], { reason: string; at: number } | null>,
+  Equal<
+    ResolvedPolicy['suspended'],
+    { reason: string; message: string | null; at: number } | null
+  >,
   Equal<AdminEvent['actorId'], `admin:${string}`>,
   Equal<typeof systemOrgId, 'system'>,
   Equal<DenialEntry['status'], 401 | 403 | 404>,
-] = [true, true, true, true, true, true, true, true, true, true]
+  // P1-10c close: activity names, the suspension's message.
+  Equal<Awaited<ReturnType<AdminRpc['listActivity']>>, ActivityPage>,
+  Equal<ActivityPage['names'], Record<string, string>>,
+  Equal<OrgDetail['names'], Record<string, string>>,
+  Equal<
+    Parameters<AdminRpc['suspendOrg']>,
+    [admin: AdminContext, orgId: string, reason: string, message?: string]
+  >,
+] = [
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+]
 
 // The env output type survives the declaration boundary.
 const composedEnv = composeEnv([

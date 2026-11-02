@@ -43,7 +43,11 @@ export async function loadPolicyRows(ctx: TenantContext): Promise<{
     overrides: overrideRows,
     suspension:
       suspension && suspension.liftedAt === null
-        ? { reason: suspension.reason, at: suspension.at }
+        ? {
+            reason: suspension.reason,
+            message: suspension.message,
+            at: suspension.at,
+          }
         : null,
   }
 }
@@ -60,6 +64,7 @@ export async function getSuspension(
   return row
     ? {
         reason: row.reason,
+        message: row.message,
         adminId: row.adminId,
         at: row.at,
         liftedAt: row.liftedAt,
@@ -68,14 +73,22 @@ export async function getSuspension(
 }
 
 // Suspends the org (AdminRpc): writes its one suspension row, replacing an
-// earlier one, lifted or not, with this reason, admin and time. The policy
-// engine then answers 'suspended' (entitled(), requirePlan() in /hono).
+// earlier one, lifted or not, with this reason (the operator's note),
+// message (the members' text; absent or empty is null, the app's default),
+// admin and time. The policy engine then answers 'suspended' (entitled(),
+// requirePlan() in /hono).
 export async function suspendOrg(
   ctx: TenantContext,
-  options: { reason: string; adminId: string; now?: number },
+  options: {
+    reason: string
+    message?: string | null
+    adminId: string
+    now?: number
+  },
 ): Promise<SuspensionRecord> {
   const values = {
     reason: options.reason,
+    message: options.message || null,
     adminId: options.adminId,
     at: options.now ?? Date.now(),
     liftedAt: null,

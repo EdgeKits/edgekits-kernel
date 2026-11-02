@@ -58,16 +58,22 @@ export interface ProviderSubscriptionRecord {
 }
 
 // An org's suspension row (P1-10); liftedAt is null while it is in force.
+// reason is the operator's note (the admin's card and the audit log only);
+// message is the text the org's members are shown, null for the app's
+// default.
 export interface SuspensionRecord {
   reason: string
+  message: string | null
   adminId: string
   at: number
   liftedAt: number | null
 }
 
-// A suspension in force, as the policy engine reports it.
+// A suspension in force, as the policy engine reports it: the operator's
+// note (reason) and the members' text (message, null for the default).
 export interface Suspension {
   reason: string
+  message: string | null
   at: number
 }
 

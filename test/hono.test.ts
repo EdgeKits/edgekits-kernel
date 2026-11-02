@@ -674,7 +674,7 @@ describe('@edgekits/kernel/hono', () => {
           ...(ctx.orgId === 'A'
             ? { plan: null, source: 'none', values: {} }
             : { plan: 'pro', source: 'subscription', values: {} }),
-          suspended: { reason: 'abuse', at: 1000 },
+          suspended: { reason: 'abuse', message: null, at: 1000 },
         }),
       } as unknown as PolicyEngine
 

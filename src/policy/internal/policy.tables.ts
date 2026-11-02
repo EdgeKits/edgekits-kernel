@@ -49,11 +49,13 @@ export const entitlementOverrides = tenantTable('entitlement_overrides', {
 
 // An org's suspension by an admin (P1-10): one row per org, id 'current'.
 // Lifting sets lifted_at; a later suspension replaces the row. Written only
-// by suspendOrg() and liftSuspension() in repo.ts (AdminRpc). Timestamps are
-// epoch milliseconds.
+// by suspendOrg() and liftSuspension() in repo.ts (AdminRpc). reason is the
+// operator's note, message the text shown to the org's members (null: the
+// app's default). Timestamps are epoch milliseconds.
 export const orgSuspensions = tenantTable('org_suspensions', {
   id: text('id'),
   reason: text('reason').notNull(),
+  message: text('message'),
   adminId: text('admin_id').notNull(),
   at: integer('at').notNull(),
   liftedAt: integer('lifted_at'),

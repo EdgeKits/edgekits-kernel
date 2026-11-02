@@ -87,7 +87,8 @@ export type BillingEvent = BillingEventCommon &
 
 // Organization events: the actor is the signed-in user who acted. userId
 // and memberId name the member acted upon; for member.left the actor and the
-// subject are the same user.
+// subject are the same user. member.invitation_canceled is a pending
+// invitation withdrawn before it was accepted.
 export type OrgEvent = KernelEventCommon & { actorId: string } & (
     | { type: 'org.created' }
     | {
@@ -95,6 +96,11 @@ export type OrgEvent = KernelEventCommon & { actorId: string } & (
         invitationId: string
         email: string
         role: string
+      }
+    | {
+        type: 'member.invitation_canceled'
+        invitationId: string
+        email: string
       }
     | { type: 'member.joined'; userId: string; memberId: string; role: string }
     | {
@@ -137,7 +143,9 @@ export type AdminEvent = KernelEventCommon & {
         expiresAt?: number
       }
     | { type: 'admin.override_cleared'; key: string }
-    | { type: 'admin.suspended'; reason: string }
+    // reason: the operator's note; message: the members' text, null for the
+    // app's default.
+    | { type: 'admin.suspended'; reason: string; message: string | null }
     | { type: 'admin.unsuspended' }
     | { type: 'admin.trial_started'; plan: PlanId; endsAt: number }
     | { type: 'admin.trial_extended'; endsAt: number }

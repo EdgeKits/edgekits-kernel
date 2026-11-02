@@ -84,6 +84,17 @@ export interface ActivityEntry {
   requestId: string | null
 }
 
+// One page of an org's audit log, with a name for each user it names.
+export interface ActivityPage extends Page<ActivityEntry> {
+  names: UserNames
+}
+
+// A user's display name by user id (the profile name, or the email when the
+// name is empty) for the users a list of activity entries names: actors,
+// subject.userId and subject.asUser, whether or not they are still members.
+// An id without a user row is absent.
+export type UserNames = Record<UserId, string>
+
 export interface OrgDetail extends OrgSummary {
   members: OrgMember[]
   // The provider subscription the plan comes from, or null.
@@ -99,8 +110,10 @@ export interface OrgDetail extends OrgSummary {
   kernelTrial: SubscriptionRecord | null
   // The org's suspension row, in force or lifted, or null.
   suspension: SuspensionRecord | null
-  // The last 20 audit log rows, newest first.
+  // The last 20 audit log rows, newest first, and the names of the users
+  // they name.
   activity: ActivityEntry[]
+  names: UserNames
 }
 
 // A price of a plan written through createPlan(). amount is in the
@@ -155,7 +168,7 @@ export interface AdminRpc {
     admin: AdminContext,
     orgId: OrgId,
     cursor?: string,
-  ): Promise<Page<ActivityEntry>>
+  ): Promise<ActivityPage>
   // The catalog, archived plans included, each with its prices.
   listPlans(admin: AdminContext): Promise<PlanRecord[]>
   getSettings(admin: AdminContext): Promise<SettingRecord[]>
@@ -183,8 +196,15 @@ export interface AdminRpc {
     orgId: OrgId,
     key: EntitlementKey,
   ): Promise<void>
-  // admin.suspended
-  suspendOrg(admin: AdminContext, orgId: OrgId, reason: string): Promise<void>
+  // admin.suspended: reason is the operator's note (the admin's card and
+  // the audit log); message, optional, is the text the org's members are
+  // shown (absent or empty: the app's default).
+  suspendOrg(
+    admin: AdminContext,
+    orgId: OrgId,
+    reason: string,
+    message?: string,
+  ): Promise<void>
   // admin.unsuspended
   liftSuspension(admin: AdminContext, orgId: OrgId): Promise<void>
   // admin.trial_started: a kernel trial of plan for days.

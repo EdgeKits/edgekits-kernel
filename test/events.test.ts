@@ -329,6 +329,13 @@ const samples: Samples = {
     email: 'b@example.com',
     role: 'member',
   },
+  'member.invitation_canceled': {
+    ...user,
+    sourceId: 'u2c',
+    type: 'member.invitation_canceled',
+    invitationId: 'inv_1',
+    email: 'b@example.com',
+  },
   'member.joined': {
     ...user,
     sourceId: 'u3',
@@ -399,6 +406,7 @@ const samples: Samples = {
     sourceId: 'a3',
     type: 'admin.suspended',
     reason: 'abuse report',
+    message: null,
   },
   'admin.unsuspended': { ...admin, sourceId: 'a4', type: 'admin.unsuspended' },
   'admin.trial_started': {
@@ -503,6 +511,7 @@ describe('KernelEvent', () => {
     expectTypeOf<OrgEvent['type']>().toEqualTypeOf<
       | 'org.created'
       | 'member.invited'
+      | 'member.invitation_canceled'
       | 'member.joined'
       | 'member.role_changed'
       | 'member.removed'
@@ -523,7 +532,7 @@ describe('KernelEvent', () => {
     >().toBeNever()
     // At run time, over one sample of each type (Samples is exhaustive).
     const all = Object.values(samples) as KernelEvent[]
-    expect(all).toHaveLength(41)
+    expect(all).toHaveLength(42)
     for (const event of all) {
       expect(typeof event.occurredAt, event.type).toBe('number')
       expect(typeof event.sourceId, event.type).toBe('string')
