@@ -48,6 +48,14 @@ export interface BillingEventCommon extends KernelEventCommon {
 export type BillingEvent = BillingEventCommon &
   (
     | { type: 'customer.linked'; providerCustomerId: string }
+    // A notification the adapter refused to apply to the org its custom_data
+    // names (audit F29): the subscription's customer is not the org's.
+    // Written under that org; nothing else changes.
+    | {
+        type: 'billing.rejected'
+        providerSubscriptionId: string
+        reason: string
+      }
     // The provider created the subscription; same payload as activated.
     | {
         type: 'subscription.created'

@@ -10,6 +10,12 @@
 // module that holds no tenant table (Better Auth's tables, for example) is
 // named in `shared` and is not checked.
 //
+// The kernel's own tables are exported from its subpaths, not from a
+// *.tables module, so the rule also knows them by name (audit F41): a value
+// import of one of kernelTenantTables' names from its subpath is reported
+// like a table module, and so is a namespace import or `export *` of such a
+// subpath.
+//
 // This file has no relative imports and only erasable TypeScript syntax, so
 // Node loads it from the sources as well as from dist/ (the kernel's own
 // config imports src/eslint/index.ts).
@@ -44,16 +50,48 @@ export const defaultFiles: readonly string[] = [
 
 const tablesModule = /\.tables(\.[cm]?[jt]s)?$/
 
+// The kernel's tables that only repositories query, by the subpath that
+// exports them: every tenantTable() the kernel registers (subscriptions,
+// entitlement_overrides, org_suspensions; test/node/eslint.test.ts checks
+// the list against tenantTableNames()), and org_claims, which is no tenant
+// table (an operator's claim has no org until it is accepted) but is read
+// and written only through the kernel's claim functions and repositories.
+export const kernelTenantTables: Readonly<Record<string, readonly string[]>> = {
+  '@edgekits/kernel/policy': [
+    'subscriptions',
+    'entitlementOverrides',
+    'orgSuspensions',
+  ],
+  '@edgekits/kernel/tenancy': ['orgClaims'],
+}
+
 // The last segment of an import source without its extension:
 // '@acme/schema/auth.tables' and './auth.tables.js' are both 'auth.tables'.
 const moduleName = (source: string): string =>
   (source.split('/').pop() ?? source).replace(/\.[cm]?[jt]sx?$/, '')
 
+interface SpecifierLike {
+  type?: string
+  importKind?: string
+  exportKind?: string
+  imported?: { name?: string; value?: unknown }
+  local?: { name?: string; value?: unknown }
+}
+
 interface ImportLike {
+  type?: string
   source?: { type?: string; value?: unknown } | null
   importKind?: string
   exportKind?: string
-  specifiers?: ReadonlyArray<{ importKind?: string; exportKind?: string }>
+  specifiers?: ReadonlyArray<SpecifierLike>
+}
+
+// The name a specifier takes from its source: `imported` for an import,
+// `local` for a re-export (`export { a as b } from`).
+const sourceName = (s: SpecifierLike): string | undefined => {
+  const id = s.type === 'ExportSpecifier' ? s.local : (s.imported ?? s.local)
+  const name = id?.name ?? id?.value
+  return typeof name === 'string' ? name : undefined
 }
 
 const typeOnly = (node: ImportLike): boolean =>
@@ -78,23 +116,62 @@ export const tenantTableAccess: Rule.RuleModule = {
     messages: {
       tenantTable:
         "'{{source}}' exports tenant tables. Query them through a module repository and TenantDb.repo().",
+      kernelTable:
+        "'{{name}}' from '{{source}}' is a table only repositories query. Query it through a module repository.",
     },
     schema: [
       {
         type: 'object',
         properties: {
           shared: { type: 'array', items: { type: 'string' } },
+          packages: {
+            type: 'object',
+            additionalProperties: { type: 'array', items: { type: 'string' } },
+          },
         },
         additionalProperties: false,
       },
     ],
   },
   create(context) {
-    const options = (context.options[0] ?? {}) as { shared?: string[] }
+    const options = (context.options[0] ?? {}) as {
+      shared?: string[]
+      packages?: Record<string, string[]>
+    }
     const shared = new Set((options.shared ?? []).map(moduleName))
+    const packages = options.packages ?? kernelTenantTables
+    const checkPackage = (
+      node: ImportLike & Rule.Node,
+      source: string,
+      names: readonly string[],
+    ) => {
+      if (typeOnly(node)) return
+      const whole =
+        node.type === 'ExportAllDeclaration' ||
+        node.type === 'ImportExpression' ||
+        (node.specifiers ?? []).some(
+          (s) => s.type === 'ImportNamespaceSpecifier',
+        )
+      const hits = whole
+        ? ['*']
+        : (node.specifiers ?? [])
+            .filter((s) => s.importKind !== 'type' && s.exportKind !== 'type')
+            .map(sourceName)
+            .filter((name): name is string => !!name && names.includes(name))
+      for (const name of hits) {
+        context.report({
+          node: node.source as unknown as Rule.Node,
+          messageId: 'kernelTable',
+          data: { name, source },
+        })
+      }
+    }
     const check = (node: ImportLike & Rule.Node) => {
       const value = node.source?.value
-      if (typeof value !== 'string' || !tablesModule.test(value)) return
+      if (typeof value !== 'string') return
+      const names = Object.hasOwn(packages, value) ? packages[value] : undefined
+      if (names) return checkPackage(node, value, names)
+      if (!tablesModule.test(value)) return
       if (shared.has(moduleName(value)) || typeOnly(node)) return
       context.report({
         node: node.source as unknown as Rule.Node,
@@ -161,6 +238,9 @@ export interface TenantTablesOptions {
   // Table modules that hold no tenant table, by name ('auth.tables'): imports
   // of them are not checked.
   shared?: readonly string[]
+  // Tables exported from packages, by import source: a value import of one
+  // of the names is reported. Default: kernelTenantTables.
+  packages?: Readonly<Record<string, readonly string[]>>
 }
 
 // Two config objects: tenant-table-access on every file but the repositories
@@ -183,7 +263,14 @@ export function tenantTables(
       rules: {
         [`${pluginName}/tenant-table-access`]: [
           'error',
-          { shared: [...(options.shared ?? [])] },
+          {
+            shared: [...(options.shared ?? [])],
+            packages: Object.fromEntries(
+              Object.entries(options.packages ?? kernelTenantTables).map(
+                ([source, names]) => [source, [...names]],
+              ),
+            ),
+          },
         ],
       },
     },

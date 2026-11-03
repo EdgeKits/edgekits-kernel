@@ -47,7 +47,13 @@ export interface SecurityHeadersOptions {
   csp?: string
   // Sets the frame-ancestors directive, for example "'self'".
   frameAncestors?: string
+  // Strict-Transport-Security on https requests (audit F43). Default
+  // HSTS_DEFAULT; false leaves the header out. Never sent over plain http,
+  // so a local http://localhost run is not pinned to https.
+  hsts?: string | false
 }
+
+export const HSTS_DEFAULT = 'max-age=31536000; includeSubDomains'
 
 const DEFAULT_CSP =
   "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
@@ -96,10 +102,18 @@ export function securityHeaders(
       : []),
     ['Permissions-Policy', 'camera=(), microphone=(), geolocation=()'],
   ]
+  const hsts = options.hsts === undefined ? HSTS_DEFAULT : options.hsts
   return createMiddleware(async (c, next) => {
     await next()
     for (const [name, value] of headers) {
       if (!c.res.headers.has(name)) c.header(name, value)
+    }
+    if (
+      hsts &&
+      new URL(c.req.url).protocol === 'https:' &&
+      !c.res.headers.has('Strict-Transport-Security')
+    ) {
+      c.header('Strict-Transport-Security', hsts)
     }
   })
 }

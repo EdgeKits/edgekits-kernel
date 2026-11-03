@@ -233,6 +233,12 @@ const samples: Samples = {
     type: 'customer.linked',
     providerCustomerId: 'ctm_1',
   },
+  'billing.rejected': {
+    ...billing('e0', 'billing.rejected'),
+    type: 'billing.rejected',
+    providerSubscriptionId: 'sub_1',
+    reason: 'foreign-customer',
+  },
   'subscription.created': {
     ...billing('e2', 'subscription.created'),
     type: 'subscription.created',
@@ -608,7 +614,7 @@ describe('KernelEvent', () => {
     >().toBeNever()
     // At run time, over one sample of each type (Samples is exhaustive).
     const all = Object.values(samples) as KernelEvent[]
-    expect(all).toHaveLength(51)
+    expect(all).toHaveLength(52)
     for (const event of all) {
       expect(typeof event.occurredAt, event.type).toBe('number')
       expect(typeof event.sourceId, event.type).toBe('string')

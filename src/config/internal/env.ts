@@ -72,8 +72,21 @@ function fromZod<T>(schema: z.ZodType<T>): Check<T> {
 const variable = <T>(expected: string, signature: string, check: Check<T>) =>
   new EnvVar<T>(expected, signature, check, 'required')
 
-export function string(): EnvVar<string> {
-  return variable('expected a string', 'string', fromZod(z.string()))
+// A string; with min, at least that many characters (a secret's length,
+// audit F42). The message names the length, never the value.
+export function string(options: { min?: number } = {}): EnvVar<string> {
+  const { min } = options
+  if (min === undefined) {
+    return variable('expected a string', 'string', fromZod(z.string()))
+  }
+  if (!Number.isInteger(min) || min < 1) {
+    throw new Error('string(): min must be a positive integer')
+  }
+  return variable(
+    `expected at least ${min} characters`,
+    `string({ min: ${min} })`,
+    fromZod(z.string().min(min)),
+  )
 }
 
 // A number, or a string holding one ("8787").

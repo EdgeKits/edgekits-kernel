@@ -1,8 +1,13 @@
+import { getTableName, isTable, type Table } from 'drizzle-orm'
 import { Linter } from 'eslint'
 import tseslint from 'typescript-eslint'
 import { describe, expect, it } from 'vitest'
+import * as policy from '@edgekits/kernel/policy'
+import * as tenancy from '@edgekits/kernel/tenancy'
+import { tenantTableNames } from '../../src/tenancy/internal/table.js'
 import {
   defaultRepositories,
+  kernelTenantTables,
   pluginName,
   subpath,
   tenantTables,
@@ -156,5 +161,103 @@ export const session = sqliteTable('session', {
 `,
       ),
     ).toEqual([])
+  })
+
+  it("flags the kernel's own tables imported as values outside a repository (F41)", () => {
+    const monorepo = { repositories: ['apps/*/src/modules/*/repository.ts'] }
+    const named = `import { subscriptions, can } from '@edgekits/kernel/policy'
+export const t = [subscriptions, can]
+`
+    expect(lint('apps/app/src/modules/admin/rpc.ts', named, monorepo)).toEqual([
+      access,
+    ])
+    expect(
+      lint(
+        'apps/app/src/modules/claims/sweep.ts',
+        `import { orgClaims as claims } from '@edgekits/kernel/tenancy'
+export const c = claims
+`,
+        monorepo,
+      ),
+    ).toEqual([access])
+    expect(
+      lint(
+        'apps/app/src/lib/all.ts',
+        `import * as policy from '@edgekits/kernel/policy'
+export const p = policy
+`,
+        monorepo,
+      ),
+    ).toEqual([access])
+    expect(
+      lint(
+        'packages/schema/src/index.ts',
+        `export { orgSuspensions } from '@edgekits/kernel/policy'
+`,
+        monorepo,
+      ),
+    ).toEqual([access])
+  })
+
+  it("allows the kernel's other exports, type-only imports and repositories", () => {
+    const monorepo = { repositories: ['apps/*/src/modules/*/repository.ts'] }
+    expect(
+      lint(
+        'apps/app/src/worker.ts',
+        `import { can, requirePlan } from '@edgekits/kernel/policy'
+export const x = [can, requirePlan]
+`,
+        monorepo,
+      ),
+    ).toEqual([])
+    expect(
+      lint(
+        'apps/app/src/worker.ts',
+        `import { type subscriptions } from '@edgekits/kernel/policy'
+export type S = typeof subscriptions
+`,
+        monorepo,
+      ),
+    ).toEqual([])
+    expect(
+      lint(
+        'apps/app/src/modules/admin/repository.ts',
+        `import { subscriptions } from '@edgekits/kernel/policy'
+export const s = subscriptions
+`,
+        monorepo,
+      ),
+    ).toEqual([])
+  })
+
+  it('names every tenant table the kernel registers, by the subpath that exports it', () => {
+    const exported = (module: Record<string, unknown>) =>
+      Object.entries(module).filter(([, value]) => isTable(value)) as Array<
+        [string, Table]
+      >
+    const modules: Record<string, Record<string, unknown>> = {
+      '@edgekits/kernel/policy': policy,
+      '@edgekits/kernel/tenancy': tenancy,
+    }
+    const registered = new Set(tenantTableNames())
+    const listed = new Set<string>()
+    for (const [source, names] of Object.entries(kernelTenantTables)) {
+      const tables = new Map(exported(modules[source] ?? {}))
+      for (const name of names) {
+        const table = tables.get(name)
+        expect(table, `${source} exports ${name}`).toBeDefined()
+        listed.add(getTableName(table as Table))
+      }
+      // Every registered tenant table a subpath exports is listed.
+      for (const [name, table] of tables) {
+        if (registered.has(getTableName(table))) {
+          expect(names, `${source} lists ${name}`).toContain(name)
+        }
+      }
+    }
+    for (const name of registered) expect(listed).toContain(name)
+    // org_claims is listed although it is no tenant table.
+    expect(registered.has('org_claims')).toBe(false)
+    expect(listed.has('org_claims')).toBe(true)
   })
 })

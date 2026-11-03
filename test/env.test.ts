@@ -39,6 +39,19 @@ describe('env validators', () => {
     expect(one(string())(42).ok).toBe(false)
   })
 
+  it('string({ min }) refuses a shorter value without naming it (audit F42)', () => {
+    const secret = string({ min: 32 })
+    expect(one(secret)('x'.repeat(32))).toEqual({
+      ok: true,
+      value: 'x'.repeat(32),
+    })
+    const short = one(secret)('short-secret')
+    expect(short.ok).toBe(false)
+    expect(JSON.stringify(short)).not.toContain('short-secret')
+    expect(JSON.stringify(short)).toContain('at least 32 characters')
+    expect(() => string({ min: 0 })).toThrow()
+  })
+
   it('number() takes a number or a numeric string', () => {
     expect(one(number())('8787')).toEqual({ ok: true, value: 8787 })
     expect(one(number())(1.5)).toEqual({ ok: true, value: 1.5 })

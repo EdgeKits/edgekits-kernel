@@ -1,11 +1,15 @@
 // Hono middleware: session, active org, resolveTenant, PolicyError mapping.
 export {
   errors,
+  errorSummary,
   logDenial,
+  logError,
   type DenialEntry,
+  type ErrorSummary,
   type ErrorsOptions,
 } from './internal/errors.js'
 export {
+  HSTS_DEFAULT,
   noStore,
   sameOrigin,
   securityHeaders,

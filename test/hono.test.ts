@@ -5,6 +5,8 @@ import { HTTPException } from 'hono/http-exception'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   errors,
+  errorSummary,
+  HSTS_DEFAULT,
   type DenialEntry,
   noStore,
   requirePlan,
@@ -507,6 +509,22 @@ describe('@edgekits/kernel/hono', () => {
       )
     })
 
+    it('sets Strict-Transport-Security on https only (audit F43)', async () => {
+      const https = await appWith().request('https://app.example.com/')
+      expect(https.headers.get('Strict-Transport-Security')).toBe(HSTS_DEFAULT)
+      expect(HSTS_DEFAULT).toBe('max-age=31536000; includeSubDomains')
+      const http = await appWith().request('http://localhost:8787/')
+      expect(http.headers.get('Strict-Transport-Security')).toBeNull()
+      const off = await appWith({ hsts: false }).request(
+        'https://app.example.com/',
+      )
+      expect(off.headers.get('Strict-Transport-Security')).toBeNull()
+      const own = await appWith({ hsts: 'max-age=60' }).request(
+        'https://app.example.com/',
+      )
+      expect(own.headers.get('Strict-Transport-Security')).toBe('max-age=60')
+    })
+
     it('keeps a header the response already has', async () => {
       const res = await appWith(undefined, [
         'Content-Security-Policy',
@@ -776,5 +794,56 @@ describe('@edgekits/kernel/hono', () => {
         expect(projects.status).toBe(403)
       })
     })
+  })
+})
+
+describe('errorSummary() (audit F38)', () => {
+  it('keeps the name and the database code, never the message', () => {
+    // As drizzle-orm 0.45 builds it: the message carries the bound values.
+    class DrizzleQueryError extends Error {
+      constructor(query: string, params: unknown[], cause: Error) {
+        super(`Failed query: ${query}
+params: ${params.join(',')}`)
+        this.name = 'DrizzleQueryError'
+        this.cause = cause
+      }
+    }
+    const d1 = new Error(
+      'D1_ERROR: UNIQUE constraint failed: user.email: SQLITE_CONSTRAINT',
+    )
+    const error = new DrizzleQueryError(
+      'insert into "user" ("email") values (?)',
+      ['ada@example.com'],
+      d1,
+    )
+    const summary = errorSummary(error)
+    expect(summary).toEqual({ name: 'DrizzleQueryError', code: 'D1_ERROR' })
+    expect(JSON.stringify(summary)).not.toContain('ada@example.com')
+    expect(
+      errorSummary(Object.assign(new Error('x'), { code: 'E_LIMIT' })),
+    ).toEqual({ name: 'Error', code: 'E_LIMIT' })
+    expect(errorSummary(new TypeError('secret value'))).toEqual({
+      name: 'TypeError',
+      code: null,
+    })
+    expect(errorSummary('a string')).toEqual({ name: 'string', code: null })
+  })
+
+  it("is errors()' default log", async () => {
+    const lines: unknown[] = []
+    const spy = vi
+      .spyOn(console, 'error')
+      .mockImplementation((line) => void lines.push(line))
+    const hono = new Hono()
+    hono.onError(errors())
+    hono.get('/', () => {
+      throw new Error('params: ada@example.com')
+    })
+    const res = await hono.request('/')
+    spy.mockRestore()
+    expect(res.status).toBe(500)
+    expect(lines).toEqual([
+      JSON.stringify({ event: 'error', name: 'Error', code: null }),
+    ])
   })
 })

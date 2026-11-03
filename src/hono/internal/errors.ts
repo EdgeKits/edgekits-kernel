@@ -27,8 +27,50 @@ export const logDenial = (entry: DenialEntry): void => {
   console.warn(JSON.stringify(entry))
 }
 
+// What a log line may say about an error (audit F38): its name and, for a
+// database error, the driver's code. Never the message: Drizzle's
+// DrizzleQueryError message carries the query's bound parameters (emails,
+// names, token hashes), and a D1 error's message can quote values too.
+export interface ErrorSummary {
+  name: string
+  code: string | null
+}
+
+const D1_CODE = /\b(D1_[A-Z_]+|SQLITE_[A-Z_]+)\b/
+
+export function errorSummary(error: unknown): ErrorSummary {
+  if (!(error instanceof Error)) return { name: typeof error, code: null }
+  const seen = new Set<unknown>()
+  let code: string | null = null
+  for (let e: unknown = error; e instanceof Error && !seen.has(e);) {
+    seen.add(e)
+    const own = (e as { code?: unknown }).code
+    if (typeof own === 'string' && own !== '') {
+      code = own
+      break
+    }
+    // The driver's code word, read out of the cause's message; nothing else
+    // of that message is kept.
+    if (e !== error) {
+      const match = D1_CODE.exec(e.message)
+      if (match) {
+        code = match[1] ?? null
+        break
+      }
+    }
+    e = (e as { cause?: unknown }).cause
+  }
+  return { name: error.name, code }
+}
+
+// The default log of errors(): one JSON line with the summary only.
+export const logError = (error: unknown): void => {
+  console.error(JSON.stringify({ event: 'error', ...errorSummary(error) }))
+}
+
 export interface ErrorsOptions {
-  // Receives every error that becomes a 500. Defaults to console.error.
+  // Receives every error that becomes a 500. Defaults to logError (the
+  // error's name and database code, never its message).
   log?: (error: unknown) => void
   // Receives every 401, 403 and 404 errors() answers. Defaults to
   // logDenial (console.warn, one JSON line).
@@ -80,7 +122,7 @@ const isDenial = (status: number): status is DenialEntry['status'] =>
 // included) to 500 with no detail in the body. Every 401, 403 and 404 it
 // answers goes to denied; a throwing denied hook does not change the answer.
 export function errors(options: ErrorsOptions = {}): ErrorHandler {
-  const log = options.log ?? console.error
+  const log = options.log ?? logError
   const denied = options.denied ?? logDenial
   const report = (c: Context, status: number, reason: string) => {
     if (!isDenial(status)) return

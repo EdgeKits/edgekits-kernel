@@ -1,6 +1,7 @@
 # The kernel's gate: `npm run ci` (scripts/ci.mjs) on every push and pull
 # request. It does not deploy or publish, and it needs no token and no
-# secret: the tests run workerd locally.
+# secret: the tests run workerd locally. Actions are pinned by commit SHA,
+# the release in a comment.
 name: ci
 
 on:
@@ -14,8 +15,10 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           # Node 22: eslint.config.js loads src/eslint/index.ts through
           # Node's type stripping (22.18 and later).

@@ -17,8 +17,10 @@ export interface AccessIdentityOptions {
   // 'dev' trusts devIdentity and never reads the header: it is for local
   // runs only (audit F5).
   mode: 'production' | 'dev'
-  // The build the Worker runs: 'production' for a production bundle (Vite:
-  // import.meta.env.PROD ? 'production' : 'dev'). accessIdentity() throws at
+  // The build the Worker runs: 'dev' only for a dev bundle (Vite:
+  // import.meta.env.DEV ? 'dev' : 'production'; a dev build made with
+  // `vite build --mode development` defines DEV but keeps PROD true, audit
+  // F46), 'production' otherwise. accessIdentity() throws at
   // construction when mode 'dev' meets build 'production', so a dev identity
   // cannot reach a deployed production build whatever the env says.
   build: 'dev' | 'production'
