@@ -41,3 +41,7 @@ export default tseslint.config(
 The rule sees imports, not queries: the dev-time query guard (`tenantGuardLogger`) remains the layer that catches a tenant query without an `org_id` predicate.
 
 Every public function declares its return type (the lint rule `@typescript-eslint/explicit-module-boundary-types` enforces it), and `npm run typecheck` ends with `check:dist`, which builds `dist/`, type-checks its declarations from a consumer's side with `skipLibCheck` off, and imports every subpath with plain Node, no bundler. For that, every relative import in `src/` names the emitted file with a `.js` extension; the lint rule `kernel/relative-extension` enforces it.
+
+## Continuous integration
+
+`npm run ci` runs the whole gate in order and stops at the first failure (`scripts/ci.mjs`): `npm ci`, `format:check`, `lint`, `typecheck` (which builds `dist/` and runs the dist consumer checks), `npm test` (both Vitest projects: workers in workerd, and node), the em-dash check over every tracked file, and a check that no tracked file matches `dev.vars`. `.github/workflows/ci.yml` runs it on every push and pull request (ubuntu-latest, Node 22). It needs no secret and no token, and it deploys and publishes nothing.
