@@ -2,6 +2,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tseslint from 'typescript-eslint'
+// Node loads the TypeScript source directly (type stripping): one copy of
+// the tenant-table rules, the one @edgekits/kernel/eslint publishes.
+import { tenantTables } from './src/eslint/index.ts'
 
 const src = path.join(path.dirname(fileURLToPath(import.meta.url)), 'src')
 
@@ -93,89 +96,10 @@ const relativeExtension = {
   },
 }
 
-const root = path.dirname(fileURLToPath(import.meta.url))
-
-// ADR-004 layer 2. Convention: tenant tables are declared with tenantTable()
-// and exported from files named *.tables.ts. Only repositories
-// (src/**/repo.ts), the tenancy subpath, a subpath's public entry
-// (src/<name>/index.ts, which re-exports them for a consumer's migrations),
-// other *.tables.ts files (for references between tables and schema
-// packages), drizzle.config.ts files and tests may import values from them;
-// type-only imports are allowed anywhere.
-// ADR-008: inside a tenantTable() call in a *.tables.ts file, a column may not
-// use .references(). Drizzle keeps a column builder's references private, so
-// tenantTable() cannot refuse them itself; references go through
-// tenantReference() (or foreignKey() for a non-tenant target) in the extra
-// config.
-const tablesModule = /\.tables(\.[cm]?[jt]s)?$/
-
-function mayImportTables(file) {
-  const rel = path.relative(root, file).split(path.sep).join('/')
-  return (
-    /^src\/(.+\/)?repo\.ts$/.test(rel) ||
-    rel.startsWith('src/tenancy/') ||
-    /^src\/[^/]+\/index\.ts$/.test(rel) ||
-    /\.tables\.ts$/.test(rel) ||
-    /(^|\/)drizzle\.config\.ts$/.test(rel) ||
-    /\.test\.ts$/.test(rel) ||
-    rel.startsWith('test/')
-  )
-}
-
-const tenantTableAccess = {
-  meta: {
-    type: 'problem',
-    messages: {
-      tenantTable:
-        "'{{source}}' exports tenant tables. Query them through a module repository (src/**/repo.ts) and TenantDb.repo().",
-      references:
-        'A tenant table column may not use .references() (ADR-008). Use tenantReference() in the extra config, or foreignKey() for a non-tenant target.',
-    },
-    schema: [],
-  },
-  create(context) {
-    const visitors = {}
-    if (tablesModule.test(context.filename)) {
-      visitors[
-        'CallExpression[callee.name="tenantTable"] CallExpression[callee.property.name="references"]'
-      ] = (node) => {
-        context.report({ node: node.callee.property, messageId: 'references' })
-      }
-    }
-    if (mayImportTables(context.filename)) return visitors
-    const check = (node) => {
-      const source = node.source?.value
-      if (typeof source !== 'string' || !tablesModule.test(source)) return
-      if (node.importKind === 'type' || node.exportKind === 'type') return
-      if (
-        node.specifiers?.length > 0 &&
-        node.specifiers.every(
-          (s) => s.importKind === 'type' || s.exportKind === 'type',
-        )
-      ) {
-        return
-      }
-      context.report({
-        node: node.source,
-        messageId: 'tenantTable',
-        data: { source },
-      })
-    }
-    return {
-      ...visitors,
-      ImportDeclaration: check,
-      ExportAllDeclaration: check,
-      ExportNamedDeclaration: check,
-      ImportExpression: check,
-    }
-  },
-}
-
 const kernel = {
   rules: {
     'subpath-boundary': subpathBoundary,
     'relative-extension': relativeExtension,
-    'tenant-table-access': tenantTableAccess,
   },
 }
 
@@ -193,11 +117,18 @@ export default tseslint.config(
       '@typescript-eslint/explicit-module-boundary-types': 'error',
     },
   },
+  // ADR-004 layer 2 and ADR-008 (src/eslint/index.ts). Inside the kernel the
+  // repositories are src/**/repo.ts; the tenancy subpath and each subpath's
+  // public entry (which re-exports tables for a consumer's migrations) may
+  // import tables too.
+  ...tenantTables({
+    files: ['**/*.ts'],
+    repositories: ['src/**/repo.ts'],
+    allow: ['src/tenancy/**', 'src/*/index.ts'],
+  }),
   {
     files: ['**/*.ts'],
-    plugins: { kernel },
     rules: {
-      'kernel/tenant-table-access': 'error',
       'no-restricted-imports': [
         'error',
         {

@@ -8,6 +8,7 @@ import type {
   PlanPatch,
   PlanRecord,
   PlanTrial,
+  SettingRecord,
   SubscriptionRecord,
   SuspensionRecord,
 } from '@edgekits/kernel/policy'
@@ -23,6 +24,10 @@ import type {
   UserId,
 } from '@edgekits/kernel/tenancy'
 
+// accessIdentity() verifies the Access JWT (ADR-002a). Its mode 'dev' trusts
+// a fixed identity and is for local runs only: the consumer passes the build
+// it runs in (`build: import.meta.env.PROD ? 'production' : 'dev'`), and mode
+// 'dev' with build 'production' throws at construction (audit F5).
 export {
   accessIdentity,
   type AccessIdentityOptions,
@@ -170,16 +175,13 @@ export interface CatalogPlanInput {
   prices?: readonly CatalogPrice[]
 }
 
-// A deployment setting (ADR-010), such as billing.trialPlan. value is the
-// setting's JSON value. getSettings() reports billing.currencies with its
-// default (['USD'], updatedAt 0) when it is unset, and setSetting() refuses
-// a billing.currencies value that is not a non-empty list of codes in the
+// A deployment setting (ADR-010), such as billing.trialPlan: /policy's
+// SettingRecord, the row listSettings() returns. value is the setting's
+// JSON value. getSettings() reports billing.currencies with its default
+// (['USD'], updatedAt 0) when it is unset, and setSetting() refuses a
+// billing.currencies value that is not a non-empty list of codes in the
 // active provider's manifest (currenciesIssues() in /policy).
-export interface SettingRecord {
-  key: string
-  value: unknown
-  updatedAt: number
-}
+export type { SettingRecord } from '@edgekits/kernel/policy'
 
 // Exposed by the app Worker (AppEntrypoint) over the service binding APP;
 // the admin Worker keeps no D1 binding and reaches data only through it.

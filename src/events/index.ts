@@ -162,8 +162,11 @@ export type AdminEvent = KernelEventCommon & {
         amount: number
         currency: Currency
       }
+    // The refund's adjustment (the row of admin.refund_issued) and the
+    // cancel that follows it.
     | {
         type: 'admin.refund_cancel'
+        adjustmentId: string
         providerSubscriptionId: string
         transactionId: string
         amount: number

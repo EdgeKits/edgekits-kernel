@@ -26,6 +26,7 @@ import {
   planSource,
   priceForPlan,
   getSetting,
+  listSettings,
   setDefaultPlan,
   setSetting,
   setTrialPlan,
@@ -584,6 +585,22 @@ describe('settings and the trial plan', () => {
     expect(await getSetting(db, key)).toEqual({ days: 14 })
     await setSetting(db, key, 'other')
     expect(await getSetting(db, key)).toBe('other')
+  })
+
+  it('listSettings returns every stored key with its value and updatedAt, by key', async () => {
+    const prefix = `list.${freshId('k')}`
+    await setSetting(db, `${prefix}.b`, ['USD'], 2000)
+    await setSetting(db, `${prefix}.a`, { days: 7 }, 1000)
+    await setSetting(db, `${prefix}.a`, { days: 14 }, 3000)
+    const mine = (await listSettings(db)).filter((row) =>
+      row.key.startsWith(prefix),
+    )
+    expect(mine).toEqual([
+      { key: `${prefix}.a`, value: { days: 14 }, updatedAt: 3000 },
+      { key: `${prefix}.b`, value: ['USD'], updatedAt: 2000 },
+    ])
+    const keys = (await listSettings(db)).map((row) => row.key)
+    expect(keys).toEqual([...keys].sort())
   })
 
   it('trialPlan is the named plan row, or null when unset, missing or archived', async () => {

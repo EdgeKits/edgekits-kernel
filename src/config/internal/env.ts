@@ -97,8 +97,33 @@ export function boolean(): EnvVar<boolean> {
   )
 }
 
-export function url(): EnvVar<string> {
-  return variable('expected a URL', 'url', fromZod(z.url()))
+export interface UrlOptions {
+  // Refuse every scheme but https: (audit F19).
+  https?: boolean
+  // With https: also accept http://localhost (any port), for local runs.
+  allowLocalhost?: boolean
+}
+
+export function url(options: UrlOptions = {}): EnvVar<string> {
+  const parse = fromZod(z.url())
+  if (!options.https) return variable('expected a URL', 'url', parse)
+  const allowLocalhost = options.allowLocalhost === true
+  return variable(
+    allowLocalhost
+      ? 'expected an https URL (or http://localhost)'
+      : 'expected an https URL',
+    `url(${JSON.stringify({ https: true, allowLocalhost })})`,
+    (raw) => {
+      const result = parse(raw)
+      if (!result.ok) return result
+      const { protocol, hostname } = new URL(result.value)
+      if (protocol === 'https:') return result
+      if (allowLocalhost && protocol === 'http:' && hostname === 'localhost') {
+        return result
+      }
+      return { ok: false }
+    },
+  )
 }
 
 export function email(): EnvVar<string> {
@@ -152,18 +177,39 @@ export function json<S extends StandardSchema>(
 
 export type EnvShape = Record<string, EnvVar<unknown, EnvPresence>>
 
+// What a fragment's cross-field check sees. checkEnv() runs in two modes,
+// and 'names' knows only which keys are set, so a value can be unknown: a
+// check reads value() for the keys whose value decides (a provider switch),
+// and isSet() for the rest (secrets).
+export interface EnvCheckInput<S extends EnvShape = EnvShape> {
+  // The key is set: a value in 'local' mode, a listed name in 'names' mode.
+  isSet(key: keyof S & string): boolean
+  // The parsed value, or undefined when the key is unset, invalid, or set
+  // without a known value (a secret in 'names' mode, a key in options.present
+  // in 'local' mode).
+  value<K extends keyof S & string>(key: K): EnvValue<S[K]> | undefined
+}
+
+type EnvValue<V> = V extends EnvVar<infer T, EnvPresence> ? T : never
+
 export interface EnvFragment<S extends EnvShape = EnvShape> {
   readonly name: string
   readonly shape: S
+  // Rules across the fragment's keys (a key pair, a provider that needs its
+  // key), run by checkEnv() after the per-key checks. An issue's message
+  // names keys, never a value.
+  check?(env: EnvCheckInput<S>): EnvIssue[]
 }
 
 const KEY = /^[A-Z][A-Z0-9_]*$/
 
 // One module's env keys. Keys are upper snake case; a key starting with
 // PUBLIC_ is a client value (Astro's convention), any other a server value.
+// options.check holds the rules across keys (see EnvFragment.check).
 export function defineEnv<const S extends EnvShape>(
   name: string,
   shape: S,
+  options: { check?: (env: EnvCheckInput<S>) => EnvIssue[] } = {},
 ): EnvFragment<S> {
   for (const key of Object.keys(shape)) {
     if (!KEY.test(key)) {
@@ -172,7 +218,7 @@ export function defineEnv<const S extends EnvShape>(
       )
     }
   }
-  return { name, shape }
+  return options.check ? { name, shape, check: options.check } : { name, shape }
 }
 
 type UnionToIntersection<U> = (
@@ -192,6 +238,11 @@ export interface ComposedEnv<S = EnvShape> {
   readonly keys: { server: string[]; client: string[] }
   // The fragments that declare each key.
   readonly sources: Readonly<Record<string, readonly string[]>>
+  // The fragments' cross-field checks, in fragment order.
+  readonly checks: ReadonlyArray<{
+    readonly fragment: string
+    check(env: EnvCheckInput): EnvIssue[]
+  }>
 }
 
 const isClientKey = (key: string) => key.startsWith('PUBLIC_')
@@ -206,7 +257,12 @@ export function composeEnv<const F extends readonly EnvFragment[]>(
 ): ComposedEnv<Merged<F>> {
   const schema: EnvShape = {}
   const sources: Record<string, string[]> = {}
+  const checks: Array<ComposedEnv['checks'][number]> = []
   for (const fragment of fragments) {
+    if (fragment.check) {
+      const check = fragment.check.bind(fragment)
+      checks.push({ fragment: fragment.name, check })
+    }
     for (const [key, variable] of Object.entries(fragment.shape)) {
       const existing = schema[key]
       if (existing && describe(existing) !== describe(variable)) {
@@ -226,13 +282,15 @@ export function composeEnv<const F extends readonly EnvFragment[]>(
       client: keys.filter(isClientKey),
     },
     sources,
+    checks,
   }
 }
 
 export interface EnvIssue {
   key: string
   problem: 'missing' | 'invalid'
-  // Names the key and the expected type; never contains the value.
+  // Names the key and the expected type (or, from a fragment's check, the
+  // rule); never contains the value.
   message: string
 }
 
@@ -275,34 +333,78 @@ function evaluate(composed: ComposedEnv, values: Values) {
   return { issues, parsed }
 }
 
-// 'local' validates values against the schema. 'names' takes the names that
-// are set (for example from `wrangler secret list` and the deployed vars) and
-// reports the required server keys among them that are missing; client keys
-// are build-time values and are not checked there.
+// 'local' validates values against the schema. options.present names keys
+// that are set elsewhere without a readable value (for example the names in
+// .dev.vars): they count as set, their value is not checked, and no issue is
+// reported for them. 'names' takes the names that are set (for example from
+// `wrangler secret list` and the deployed vars) and reports the required
+// server keys among them that are missing; client keys are build-time values
+// and are not checked there. options.values holds the values that are known
+// in 'names' mode (the deployed vars), for the cross-field checks.
+// Both modes then run every fragment's check (EnvFragment.check).
 export function checkEnv(
   composed: ComposedEnv,
   values: Values,
-  options: { mode: 'local' },
+  options: { mode: 'local'; present?: readonly string[] },
 ): EnvCheckResult
 export function checkEnv(
   composed: ComposedEnv,
   names: readonly string[],
-  options: { mode: 'names' },
+  options: { mode: 'names'; values?: Values },
 ): EnvCheckResult
 export function checkEnv(
   composed: ComposedEnv,
   input: Values | readonly string[],
-  options: { mode: 'local' | 'names' },
+  options:
+    | { mode: 'local'; present?: readonly string[] }
+    | { mode: 'names'; values?: Values },
 ): EnvCheckResult {
   let issues: EnvIssue[]
+  let view: EnvCheckInput
   if (options.mode === 'names') {
     const names = new Set(input as readonly string[])
+    const known = options.values ?? {}
     issues = composed.keys.server
       .filter((key) => composed.schema[key]?.presence === 'required')
       .filter((key) => !names.has(key))
       .map(missing)
+    view = {
+      isSet: (key) => names.has(key),
+      value: (key) => {
+        const variable = composed.schema[key]
+        const raw = Object.hasOwn(known, key) ? known[key] : undefined
+        if (!variable || !names.has(key) || isUnset(raw)) return undefined
+        const result = variable.check(raw)
+        return result.ok ? (result.value as never) : undefined
+      },
+    }
   } else {
-    issues = evaluate(composed, input as Values).issues
+    const values = input as Values
+    const present = new Set(options.present ?? [])
+    const evaluated = evaluate(composed, values)
+    issues = evaluated.issues.filter((issue) => !present.has(issue.key))
+    const valid = new Set(
+      Object.keys(evaluated.parsed).filter(
+        (key) => !evaluated.issues.some((issue) => issue.key === key),
+      ),
+    )
+    view = {
+      isSet: (key) =>
+        present.has(key) ||
+        !isUnset(Object.hasOwn(values, key) ? values[key] : undefined),
+      value: (key) =>
+        present.has(key) || !valid.has(key)
+          ? undefined
+          : (evaluated.parsed[key] as never),
+    }
+  }
+  for (const { check } of composed.checks) {
+    for (const issue of check(view)) {
+      if (options.mode === 'local' && options.present?.includes(issue.key)) {
+        continue
+      }
+      issues.push(issue)
+    }
   }
   return issues.length === 0 ? { ok: true } : { ok: false, issues }
 }

@@ -39,6 +39,10 @@
     "./hono": {
       "types": "./dist/hono/index.d.ts",
       "default": "./dist/hono/index.js"
+    },
+    "./eslint": {
+      "types": "./dist/eslint/index.d.ts",
+      "default": "./dist/eslint/index.js"
     }
   },
   "scripts": {
@@ -70,6 +74,12 @@
     "zod": "^4.6.7"
   },
   "peerDependencies": {
+    "eslint": "^9.0.0 || ^10.0.0",
     "hono": "^4.13.13"
+  },
+  "peerDependenciesMeta": {
+    "eslint": {
+      "optional": true
+    }
   }
 }

@@ -61,6 +61,49 @@ describe('env validators', () => {
     expect(one(email())('ops').ok).toBe(false)
   })
 
+  // Audit F19.
+  it('url({ https: true }) refuses every scheme but https:', () => {
+    const https = one(url({ https: true }))
+    expect(https('https://team.cloudflareaccess.com').ok).toBe(true)
+    expect(https('http://team.cloudflareaccess.com').ok).toBe(false)
+    expect(https('http://localhost:8787').ok).toBe(false)
+    expect(https('ftp://example.com').ok).toBe(false)
+    expect(https('nope').ok).toBe(false)
+    expect(https('http://example.com')).toEqual({
+      ok: false,
+      issues: [
+        {
+          key: 'KEY',
+          problem: 'invalid',
+          message: 'KEY is invalid: expected an https URL',
+        },
+      ],
+    })
+  })
+
+  it('url({ https: true, allowLocalhost: true }) also takes http://localhost', () => {
+    const local = one(url({ https: true, allowLocalhost: true }))
+    expect(local('https://app.example.com').ok).toBe(true)
+    expect(local('http://localhost:8787').ok).toBe(true)
+    expect(local('http://localhost').ok).toBe(true)
+    expect(local('http://127.0.0.1:8787').ok).toBe(false)
+    expect(local('http://localhost.example.com').ok).toBe(false)
+    expect(local('ws://localhost:8787').ok).toBe(false)
+    // allowLocalhost alone changes nothing: the plain url() takes any scheme.
+    expect(one(url({ allowLocalhost: true }))('ftp://example.com').ok).toBe(
+      true,
+    )
+  })
+
+  it('url() options are part of the declaration composeEnv compares', () => {
+    expect(() =>
+      composeEnv([
+        defineEnv('a', { SITE: url({ https: true }) }),
+        defineEnv('b', { SITE: url() }),
+      ]),
+    ).toThrow(/SITE is declared as url\(\{"https":true/)
+  })
+
   it('oneOf()', () => {
     expect(one(oneOf(['dev', 'production']))('dev')).toEqual({
       ok: true,
@@ -248,6 +291,146 @@ describe('checkEnv', () => {
           mode: 'names',
         },
       ),
+    ).toEqual({ ok: true })
+  })
+})
+
+describe('checkEnv: cross-field checks', () => {
+  // Two key pairs and a provider switch, as the starter declares them.
+  const auth = defineEnv(
+    'auth',
+    {
+      GOOGLE_CLIENT_ID: string().optional(),
+      GOOGLE_CLIENT_SECRET: string().optional(),
+    },
+    {
+      check: (env) =>
+        env.isSet('GOOGLE_CLIENT_ID') === env.isSet('GOOGLE_CLIENT_SECRET')
+          ? []
+          : [
+              {
+                key: env.isSet('GOOGLE_CLIENT_ID')
+                  ? 'GOOGLE_CLIENT_SECRET'
+                  : 'GOOGLE_CLIENT_ID',
+                problem: 'missing',
+                message:
+                  'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET go together',
+              },
+            ],
+    },
+  )
+  const mail = defineEnv(
+    'mail',
+    {
+      MAIL_PROVIDER: oneOf(['cloudflare', 'resend']).optional(),
+      RESEND_API_KEY: string().optional(),
+    },
+    {
+      check: (env) => {
+        expectTypeOf(env.value('MAIL_PROVIDER')).toEqualTypeOf<
+          'cloudflare' | 'resend' | undefined
+        >()
+        return env.value('MAIL_PROVIDER') === 'resend' &&
+          !env.isSet('RESEND_API_KEY')
+          ? [
+              {
+                key: 'RESEND_API_KEY',
+                problem: 'missing',
+                message: 'RESEND_API_KEY is required with MAIL_PROVIDER=resend',
+              },
+            ]
+          : []
+      },
+    },
+  )
+  const composed = composeEnv([auth, mail])
+  const keys = (result: ReturnType<typeof checkEnv>) =>
+    result.ok ? [] : result.issues.map((issue) => issue.key)
+
+  it('composeEnv keeps each fragment check, in fragment order', () => {
+    expect(composed.checks.map((c) => c.fragment)).toEqual(['auth', 'mail'])
+    expect(composeEnv([core]).checks).toEqual([])
+  })
+
+  it('local: runs the checks over the values', () => {
+    expect(checkEnv(composed, {}, { mode: 'local' })).toEqual({ ok: true })
+    expect(
+      keys(checkEnv(composed, { GOOGLE_CLIENT_ID: 'id' }, { mode: 'local' })),
+    ).toEqual(['GOOGLE_CLIENT_SECRET'])
+    expect(
+      keys(checkEnv(composed, { MAIL_PROVIDER: 'resend' }, { mode: 'local' })),
+    ).toEqual(['RESEND_API_KEY'])
+    expect(
+      checkEnv(
+        composed,
+        { MAIL_PROVIDER: 'resend', RESEND_API_KEY: SECRET },
+        { mode: 'local' },
+      ),
+    ).toEqual({ ok: true })
+  })
+
+  it('local: an invalid value is not passed to a check', () => {
+    expect(
+      keys(checkEnv(composed, { MAIL_PROVIDER: 'smtp' }, { mode: 'local' })),
+    ).toEqual(['MAIL_PROVIDER'])
+  })
+
+  it('local: a key in present counts as set, with no value and no issue', () => {
+    expect(
+      checkEnv(
+        composed,
+        { GOOGLE_CLIENT_ID: 'id' },
+        {
+          mode: 'local',
+          present: ['GOOGLE_CLIENT_SECRET'],
+        },
+      ),
+    ).toEqual({ ok: true })
+    // MAIL_PROVIDER's value is unknown, so the provider rule cannot fire.
+    expect(
+      checkEnv(composed, {}, { mode: 'local', present: ['MAIL_PROVIDER'] }),
+    ).toEqual({ ok: true })
+    // A required key named in present is not reported missing.
+    expect(
+      checkEnv(
+        composeEnv([billing]),
+        { PADDLE_ENVIRONMENT: 'sandbox' },
+        {
+          mode: 'local',
+          present: ['PADDLE_API_KEY'],
+        },
+      ),
+    ).toEqual({ ok: true })
+  })
+
+  it('names: isSet from the names, value() from the known values only', () => {
+    expect(
+      keys(checkEnv(composed, ['GOOGLE_CLIENT_SECRET'], { mode: 'names' })),
+    ).toEqual(['GOOGLE_CLIENT_ID'])
+    expect(
+      keys(
+        checkEnv(composed, ['MAIL_PROVIDER'], {
+          mode: 'names',
+          values: { MAIL_PROVIDER: 'resend' },
+        }),
+      ),
+    ).toEqual(['RESEND_API_KEY'])
+    expect(
+      checkEnv(composed, ['MAIL_PROVIDER', 'RESEND_API_KEY'], {
+        mode: 'names',
+        values: { MAIL_PROVIDER: 'resend' },
+      }),
+    ).toEqual({ ok: true })
+    // Without a known value the provider rule cannot fire; a known value of
+    // a key that is not in the names does not count.
+    expect(checkEnv(composed, ['MAIL_PROVIDER'], { mode: 'names' })).toEqual({
+      ok: true,
+    })
+    expect(
+      checkEnv(composed, [], {
+        mode: 'names',
+        values: { MAIL_PROVIDER: 'resend' },
+      }),
     ).toEqual({ ok: true })
   })
 })

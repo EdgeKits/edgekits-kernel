@@ -80,12 +80,14 @@ export {
   defaultCurrencies,
   getCurrencies,
   getSetting,
+  listSettings,
   setCurrencies,
   setSetting,
   SettingError,
   setTrialPlan,
   trialPlan,
   trialPlanKey,
+  type SettingRecord,
 } from './internal/settings/repo.js'
 export {
   resolveEntitlements,

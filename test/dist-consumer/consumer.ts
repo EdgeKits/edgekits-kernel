@@ -14,15 +14,23 @@ import {
   type UserSummary,
 } from '@edgekits/kernel/admin'
 import {
+  checkEnv,
   composeEnv,
   defaultRoles,
   defineEnv,
   defineSaaS,
   oneOf,
   parseEnv,
+  string,
   url,
   type Blueprint,
+  type EnvCheckInput,
 } from '@edgekits/kernel/config'
+import {
+  plugin,
+  tenantTables,
+  type TenantTablesOptions,
+} from '@edgekits/kernel/eslint'
 import {
   applySubscriptionEvents,
   noopEventBus,
@@ -40,6 +48,8 @@ import {
 import {
   addPrice,
   applyProviderSubscription,
+  listSettings,
+  type SettingRecord,
   archivePlan,
   archivePrice,
   createPlan,
@@ -345,3 +355,48 @@ export const auditFixes: [
   Equal<Parameters<typeof setClaimOrg>[2], string>,
   Equal<Parameters<typeof releaseClaimMark>[2], number>,
 ] = [true, true, true, true]
+
+// P1-11a: the lint layer, the dev-mode build guard, https URLs, the env
+// cross-field check, listSettings, the refund's adjustment, displayName.
+const options: TenantTablesOptions = {
+  repositories: ['apps/*/src/modules/*/repository.ts'],
+  shared: ['auth.tables'],
+}
+export const lintLayer = [...tenantTables(options), plugin] as const
+
+const mailEnv = defineEnv(
+  'mail',
+  {
+    MAIL_PROVIDER: oneOf(['cloudflare', 'resend']).optional(),
+    RESEND_API_KEY: string().optional(),
+    APP_URL: url({ https: true, allowLocalhost: true }),
+  },
+  {
+    check: (env) =>
+      env.value('MAIL_PROVIDER') === 'resend' && !env.isSet('RESEND_API_KEY')
+        ? [{ key: 'RESEND_API_KEY', problem: 'missing', message: 'x' }]
+        : [],
+  },
+)
+export const mailCheck = checkEnv(composeEnv([mailEnv]), ['APP_URL'], {
+  mode: 'names',
+  values: { MAIL_PROVIDER: 'resend' },
+})
+
+export declare const mailInput: EnvCheckInput<typeof mailEnv.shape>
+
+export const p111a: [
+  Equal<Parameters<typeof accessIdentity>[0]['build'], 'dev' | 'production'>,
+  Equal<
+    ReturnType<typeof mailInput.value<'MAIL_PROVIDER'>>,
+    'cloudflare' | 'resend' | undefined
+  >,
+  Equal<Awaited<ReturnType<typeof listSettings>>, SettingRecord[]>,
+  Equal<SettingRecord, { key: string; value: unknown; updatedAt: number }>,
+  Equal<
+    Extract<AdminEvent, { type: 'admin.refund_cancel' }>['adjustmentId'],
+    string
+  >,
+  Equal<Blueprint['displayName'], string>,
+  Equal<Blueprint['site'], { domain: string } | undefined>,
+] = [true, true, true, true, true, true, true]

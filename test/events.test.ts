@@ -441,6 +441,7 @@ const samples: Samples = {
     ...admin,
     sourceId: 'a8',
     type: 'admin.refund_cancel',
+    adjustmentId: 'adj_1',
     providerSubscriptionId: 'sub_1',
     transactionId: 'txn_1',
     amount: 4900,

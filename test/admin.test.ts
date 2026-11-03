@@ -82,6 +82,7 @@ function app(options: Partial<AccessIdentityOptions> = {}) {
       teamDomain,
       aud,
       mode: 'production',
+      build: 'production',
       fetchJwks: async () => jwks,
       ...options,
     }),
@@ -196,6 +197,7 @@ describe('@edgekits/kernel/admin', () => {
   it('uses the dev identity in mode dev and never reads the header', async () => {
     const hono = app({
       mode: 'dev',
+      build: 'dev',
       devIdentity: { id: 'dev-admin', email: 'dev@localhost' },
       fetchJwks: () => {
         throw new Error('mode dev must not fetch the JWKS')
@@ -211,9 +213,28 @@ describe('@edgekits/kernel/admin', () => {
   })
 
   it('refuses mode dev without a dev identity', () => {
-    expect(() => accessIdentity({ teamDomain, aud, mode: 'dev' })).toThrow(
-      /devIdentity/,
-    )
+    expect(() =>
+      accessIdentity({ teamDomain, aud, mode: 'dev', build: 'dev' }),
+    ).toThrow(/devIdentity/)
+  })
+
+  // Audit F5: a dev identity never reaches a production build.
+  it('refuses mode dev in a production build, at construction', () => {
+    expect(() =>
+      accessIdentity({
+        teamDomain,
+        aud,
+        mode: 'dev',
+        build: 'production',
+        devIdentity: { id: 'dev-admin', email: 'dev@localhost' },
+      }),
+    ).toThrow(/refused in a production build/)
+  })
+
+  it('accepts mode production in a dev build', () => {
+    expect(() =>
+      accessIdentity({ teamDomain, aud, mode: 'production', build: 'dev' }),
+    ).not.toThrow()
   })
 
   it('fetches the team certs once by default', async () => {
@@ -248,7 +269,14 @@ describe('@edgekits/kernel/admin', () => {
     const domain = 'https://slow.cloudflareaccess.com'
     const hono = new Hono<{ Variables: AdminVariables }>()
     hono.onError(() => new Response('outage', { status: 500 }))
-    hono.use(accessIdentity({ teamDomain: domain, aud, mode: 'production' }))
+    hono.use(
+      accessIdentity({
+        teamDomain: domain,
+        aud,
+        mode: 'production',
+        build: 'production',
+      }),
+    )
     hono.get('/', (c) => c.text('ok'))
     const token = await signJwt(keys.privateKey, 'k1', claims({ iss: domain }))
     const started = Date.now()
@@ -267,7 +295,14 @@ describe('@edgekits/kernel/admin', () => {
     const domain = 'https://malformed.cloudflareaccess.com'
     const hono = new Hono<{ Variables: AdminVariables }>()
     hono.onError(() => new Response('outage', { status: 500 }))
-    hono.use(accessIdentity({ teamDomain: domain, aud, mode: 'production' }))
+    hono.use(
+      accessIdentity({
+        teamDomain: domain,
+        aud,
+        mode: 'production',
+        build: 'production',
+      }),
+    )
     hono.get('/', (c) => c.text('ok'))
     const token = await signJwt(keys.privateKey, 'k1', claims({ iss: domain }))
     expect((await hono.request('/', withToken(token))).status).toBe(500)

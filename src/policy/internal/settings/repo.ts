@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import type { PlanId, TenantDatabase } from '@edgekits/kernel/tenancy'
 import { getPlan, PlanError, type PlanRecord } from '../plans/repo.js'
 import { settings } from '../policy.tables.js'
@@ -89,6 +89,28 @@ export async function getSetting(
     .where(eq(settings.key, key))
     .get()
   return row ? row.value : null
+}
+
+// A stored setting; /admin re-exports it for AdminRpc.getSettings().
+export interface SettingRecord {
+  key: string
+  value: unknown
+  updatedAt: number
+}
+
+// Every stored setting, by key.
+export async function listSettings(
+  db: TenantDatabase,
+): Promise<SettingRecord[]> {
+  return db
+    .select({
+      key: settings.key,
+      value: settings.value,
+      updatedAt: settings.updatedAt,
+    })
+    .from(settings)
+    .orderBy(asc(settings.key))
+    .all()
 }
 
 // Inserts or replaces the value of a key.

@@ -212,6 +212,51 @@ describe('@edgekits/kernel/config', () => {
     ])
   })
 
+  // P1-11a: the name people read, and the apex domain.
+  it('defaults displayName to name and takes no site unless given', () => {
+    const blueprint = defineSaaS(example())
+    expect(blueprint.name).toBe('acme')
+    expect(blueprint.displayName).toBe('acme')
+    expect(blueprint.site).toBeUndefined()
+    expectTypeOf(blueprint.displayName).toEqualTypeOf<string>()
+    expectTypeOf(blueprint.site).toEqualTypeOf<{ domain: string } | undefined>()
+  })
+
+  it('keeps a given displayName and site.domain', () => {
+    const blueprint = defineSaaS({
+      ...example(),
+      displayName: 'Acme Cloud',
+      site: { domain: 'acme.example' },
+    })
+    expect(blueprint.displayName).toBe('Acme Cloud')
+    expect(blueprint.name).toBe('acme')
+    expect(blueprint.site).toEqual({ domain: 'acme.example' })
+  })
+
+  it('refuses an empty displayName and a site.domain that is no bare domain', () => {
+    expect(issuePaths({ ...example(), displayName: '  ' })).toEqual([
+      'displayName',
+    ])
+    for (const domain of [
+      'https://acme.example',
+      'acme.example/',
+      'acme.example:443',
+      'Acme.Example',
+      'localhost',
+      '',
+    ]) {
+      expect(issuePaths({ ...example(), site: { domain } })).toEqual([
+        'site.domain',
+      ])
+    }
+    expect(
+      issuePaths({
+        ...example(),
+        site: { domain: 'acme.example', url: 'x' } as { domain: string },
+      }),
+    ).toEqual(['site'])
+  })
+
   it('keeps entitlement keys and kinds and the billing provider tag in the type', () => {
     const blueprint = defineSaaS({
       ...example(),

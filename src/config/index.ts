@@ -6,9 +6,11 @@ import { blueprintSchema, type defaultRoles } from './internal/schema.js'
 export {
   blueprintSchema,
   defaultRoles,
+  domainSchema,
   entitlementKeySchema,
   entitlementsSchema,
   permissionSchema,
+  siteSchema,
 } from './internal/schema.js'
 export {
   admin,
@@ -33,6 +35,7 @@ export {
   string,
   url,
   type ComposedEnv,
+  type EnvCheckInput,
   type EnvCheckResult,
   type EnvFragment,
   type EnvIssue,
@@ -40,6 +43,7 @@ export {
   type EnvPresence,
   type EnvShape,
   type StandardSchema,
+  type UrlOptions,
 } from './internal/env.js'
 export {
   validateAgainstProviders,

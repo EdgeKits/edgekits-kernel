@@ -87,29 +87,54 @@ export const adminSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('none') }),
 ])
 
-export const blueprintSchema = z.strictObject({
-  name: z.string().min(1),
-  locales: z
-    .array(z.string().min(1))
-    .min(1)
-    .refine(unique, 'Locales must be unique'),
-  tenancy: tenancySchema,
-  auth: authSchema,
-  roles: rolesSchema
-    .optional()
-    .transform((roles): Record<string, string[]> => ({
-      owner: [...defaultRoles.owner],
-      admin: [...defaultRoles.admin],
-      member: [...defaultRoles.member],
-      ...roles,
-    })),
-  entitlements: entitlementsSchema,
-  billing: billingSchema,
-  flags: flagsSchema.optional(),
-  ai: aiSchema.optional(),
-  admin: adminSchema.optional(),
-  modules: z
-    .array(z.string().min(1))
-    .refine(unique, 'Modules must be unique')
-    .default([]),
+// A bare lower-case host name with at least one dot: no scheme, port or
+// path (example.com).
+export const domainSchema = z
+  .string()
+  .regex(
+    /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/,
+    'Expected a lower-case domain such as example.com, without scheme or path',
+  )
+
+export const siteSchema = z.strictObject({
+  // The apex domain the SaaS lives on: the x-default hreflang and the mail
+  // footer use it.
+  domain: domainSchema,
 })
+
+export const blueprintSchema = z
+  .strictObject({
+    // The slug-like id (package names, Worker names, logs).
+    name: z.string().min(1),
+    // The product's name for people: mail subjects, page titles. Defaults to
+    // name.
+    displayName: z.string().trim().min(1).optional(),
+    site: siteSchema.optional(),
+    locales: z
+      .array(z.string().min(1))
+      .min(1)
+      .refine(unique, 'Locales must be unique'),
+    tenancy: tenancySchema,
+    auth: authSchema,
+    roles: rolesSchema
+      .optional()
+      .transform((roles): Record<string, string[]> => ({
+        owner: [...defaultRoles.owner],
+        admin: [...defaultRoles.admin],
+        member: [...defaultRoles.member],
+        ...roles,
+      })),
+    entitlements: entitlementsSchema,
+    billing: billingSchema,
+    flags: flagsSchema.optional(),
+    ai: aiSchema.optional(),
+    admin: adminSchema.optional(),
+    modules: z
+      .array(z.string().min(1))
+      .refine(unique, 'Modules must be unique')
+      .default([]),
+  })
+  .transform((blueprint) => ({
+    ...blueprint,
+    displayName: blueprint.displayName ?? blueprint.name,
+  }))

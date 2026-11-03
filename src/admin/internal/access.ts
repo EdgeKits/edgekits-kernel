@@ -14,8 +14,15 @@ export interface AccessIdentityOptions {
   teamDomain: string
   // The Access application's AUD tag.
   aud: string
+  // 'dev' trusts devIdentity and never reads the header: it is for local
+  // runs only (audit F5).
   mode: 'production' | 'dev'
-  // Used only in mode 'dev', where the header is never read.
+  // The build the Worker runs: 'production' for a production bundle (Vite:
+  // import.meta.env.PROD ? 'production' : 'dev'). accessIdentity() throws at
+  // construction when mode 'dev' meets build 'production', so a dev identity
+  // cannot reach a deployed production build whatever the env says.
+  build: 'dev' | 'production'
+  // Required in mode 'dev', where it is every request's identity.
   devIdentity?: { id: AdminId; email: string }
   // Loads <teamDomain>/cdn-cgi/access/certs; defaults to fetch() with a 5 s
   // timeout. The result must be { keys: [{ kty, kid, ... }] }; anything else
@@ -105,6 +112,7 @@ const requestId = (header: string | undefined) => header ?? crypto.randomUUID()
 
 // ADR-002a: the admin identity comes from the Cf-Access-Jwt-Assertion JWT,
 // verified as RS256 against the team JWKS with iss, aud and exp checked.
+// Mode 'dev' skips all of that and is refused in a production build (F5).
 export function accessIdentity(
   options: AccessIdentityOptions,
 ): MiddlewareHandler<{ Variables: AdminVariables }> {
@@ -115,6 +123,11 @@ export function accessIdentity(
   const denied =
     options.denied ??
     ((entry: DenialEntry) => console.warn(JSON.stringify(entry)))
+  if (options.mode === 'dev' && options.build !== 'dev') {
+    throw new Error(
+      "accessIdentity: mode 'dev' is refused in a production build; use mode 'production' with the Access team domain and AUD",
+    )
+  }
   if (options.mode === 'dev' && !devIdentity) {
     throw new Error("accessIdentity: mode 'dev' requires devIdentity")
   }
