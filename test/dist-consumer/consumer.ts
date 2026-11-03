@@ -90,7 +90,10 @@ import {
   BlockedError,
   ConflictError,
   createOrgClaim,
+  markClaimAccepted,
   orgClaims,
+  releaseClaimMark,
+  setClaimOrg,
   tenantReference,
   tenantTable,
   type OrgClaimRecord,
@@ -331,3 +334,14 @@ export const adminShapeD1: [
 ] = [true, true, true, true, true, true, true, true, true, true]
 
 export const claimsTable: typeof orgClaims = orgClaims
+
+// Audit fixes F24, F28: the refund's own event; a claim accepted in two steps.
+export const auditFixes: [
+  Equal<
+    Extract<AdminEvent, { type: 'admin.refund_issued' }>['adjustmentId'],
+    string
+  >,
+  Equal<Awaited<ReturnType<typeof markClaimAccepted>>, boolean>,
+  Equal<Parameters<typeof setClaimOrg>[2], string>,
+  Equal<Parameters<typeof releaseClaimMark>[2], number>,
+] = [true, true, true, true]

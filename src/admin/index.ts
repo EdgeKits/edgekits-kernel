@@ -249,8 +249,10 @@ export interface AdminRpc {
   extendTrial(admin: AdminContext, orgId: OrgId, endsAt: number): Promise<void>
   // admin.trial_ended: ends the kernel trial now.
   endTrial(admin: AdminContext, orgId: OrgId, reason: string): Promise<void>
-  // admin.refund_cancel: refunds the org's latest transaction at the
-  // provider, then cancels its subscription now (cancel('now')).
+  // admin.refund_issued once the provider accepts the refund of the org's
+  // latest transaction, then admin.refund_cancel once its subscription is
+  // canceled now (cancel('now')). A retry after a failed cancel finds the
+  // admin.refund_issued row and does not refund again.
   refundCancel(admin: AdminContext, orgId: OrgId): Promise<void>
   // admin.plan_created
   createPlan(admin: AdminContext, input: CatalogPlanInput): Promise<PlanRecord>

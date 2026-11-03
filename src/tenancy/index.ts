@@ -13,15 +13,17 @@ export { TenantGuardError, tenantGuardLogger } from './internal/guard.js'
 // Org claims (P1-10d): an org set up by an operator for a person without an
 // account, accepted on that person's first sign-in. Not a tenant table.
 export {
-  acceptOrgClaim,
   cancelOrgClaim,
   createOrgClaim,
   findOpenClaimByToken,
   getOrgClaim,
   listOrgClaims,
+  markClaimAccepted,
   normalizeClaimEmail,
   orgClaimStatus,
   orgClaims,
+  releaseClaimMark,
+  setClaimOrg,
   type OrgClaimRecord,
   type OrgClaimStatus,
 } from './internal/claims.js'

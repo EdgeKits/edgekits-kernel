@@ -428,6 +428,15 @@ const samples: Samples = {
     type: 'admin.trial_ended',
     reason: 'converted by phone',
   },
+  'admin.refund_issued': {
+    ...admin,
+    sourceId: 'adj_1:issued',
+    type: 'admin.refund_issued',
+    adjustmentId: 'adj_1',
+    transactionId: 'txn_1',
+    amount: 4900,
+    currency: 'USD',
+  },
   'admin.refund_cancel': {
     ...admin,
     sourceId: 'a8',
@@ -598,7 +607,7 @@ describe('KernelEvent', () => {
     >().toBeNever()
     // At run time, over one sample of each type (Samples is exhaustive).
     const all = Object.values(samples) as KernelEvent[]
-    expect(all).toHaveLength(50)
+    expect(all).toHaveLength(51)
     for (const event of all) {
       expect(typeof event.occurredAt, event.type).toBe('number')
       expect(typeof event.sourceId, event.type).toBe('string')
@@ -647,7 +656,7 @@ describe('KernelEvent', () => {
     const admins = (Object.values(samples) as KernelEvent[]).filter((event) =>
       event.type.startsWith('admin.'),
     ) as AdminEvent[]
-    expect(admins).toHaveLength(22)
+    expect(admins).toHaveLength(23)
     for (const event of admins) {
       expect(event.actorId, event.type).toMatch(/^admin:/)
     }

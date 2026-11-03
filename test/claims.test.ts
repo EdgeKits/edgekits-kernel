@@ -3,18 +3,30 @@ import { drizzle } from 'drizzle-orm/d1'
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import {
-  acceptOrgClaim,
   cancelOrgClaim,
   ConflictError,
   createOrgClaim,
   findOpenClaimByToken,
   getOrgClaim,
   listOrgClaims,
+  markClaimAccepted,
   orgClaims,
   orgClaimStatus,
+  releaseClaimMark,
+  setClaimOrg,
   tenantGuardLogger,
 } from '@edgekits/kernel/tenancy'
 import { createClaimsSql } from './claims-ddl.js'
+
+// The two steps of an accept, as the starter takes them.
+const acceptOrgClaim = async (
+  database: typeof db,
+  id: string,
+  orgId: string,
+  now: number,
+) =>
+  (await markClaimAccepted(database, id, now)) &&
+  (await setClaimOrg(database, id, orgId))
 
 // Org claims (P1-10d) against D1, under the strict tenant guard: org_claims
 // is not a tenant table, and its queries name no org.
@@ -90,6 +102,41 @@ describe('org claims', () => {
     expect(orgClaimStatus(accepted!)).toBe('accepted')
     expect(await findOpenClaimByToken(db, token, 2_000_002)).toBeNull()
     expect(await cancelOrgClaim(db, created.id)).toBe(false)
+  })
+
+  it('marks a claim once: of two concurrent marks, one wins', async () => {
+    const { claim: created, token } = await claim(email())
+    const results = await Promise.all([
+      markClaimAccepted(db, created.id, 2_000_000),
+      markClaimAccepted(db, created.id, 2_000_000),
+    ])
+    expect(results.filter(Boolean)).toHaveLength(1)
+    const marked = await getOrgClaim(db, created.id)
+    expect(marked).toMatchObject({ acceptedAt: 2_000_000, orgId: null })
+    expect(orgClaimStatus(marked!)).toBe('accepted')
+    expect(await findOpenClaimByToken(db, token, 2_000_001)).toBeNull()
+    expect(await cancelOrgClaim(db, created.id)).toBe(false)
+    expect(await setClaimOrg(db, created.id, 'org-m')).toBe(true)
+    expect(await setClaimOrg(db, created.id, 'org-n')).toBe(false)
+    expect(await getOrgClaim(db, created.id)).toMatchObject({
+      orgId: 'org-m',
+    })
+  })
+
+  it('releases a mark without an org, so the claim can be accepted again', async () => {
+    const { claim: created, token } = await claim(email())
+    expect(await setClaimOrg(db, created.id, 'org-early')).toBe(false)
+    expect(await markClaimAccepted(db, created.id, 2_000_000)).toBe(true)
+    expect(await releaseClaimMark(db, created.id, 2_000_001)).toBe(false)
+    expect(await releaseClaimMark(db, created.id, 2_000_000)).toBe(true)
+    expect(await findOpenClaimByToken(db, token, 2_000_002)).toMatchObject({
+      id: created.id,
+      acceptedAt: null,
+      orgId: null,
+    })
+    expect(await acceptOrgClaim(db, created.id, 'org-r', 2_000_003)).toBe(true)
+    // A claim with its org is not released.
+    expect(await releaseClaimMark(db, created.id, 2_000_003)).toBe(false)
   })
 
   it('does not accept an expired claim, and cancels it', async () => {

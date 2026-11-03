@@ -153,6 +153,15 @@ export type AdminEvent = KernelEventCommon & {
     | { type: 'admin.trial_started'; plan: PlanId; endsAt: number }
     | { type: 'admin.trial_extended'; endsAt: number }
     | { type: 'admin.trial_ended'; reason: string }
+    // The provider accepted the refund of refundCancel (audit F24), written
+    // before the cancel; sourceId `${adjustmentId}:issued`.
+    | {
+        type: 'admin.refund_issued'
+        adjustmentId: string
+        transactionId: string
+        amount: number
+        currency: Currency
+      }
     | {
         type: 'admin.refund_cancel'
         providerSubscriptionId: string

@@ -11,8 +11,8 @@ import { ConflictError, type TenantDatabase } from './repository.js'
 // Org claims (P1-10d, ruling 2026-11-02): an organization never exists
 // without an owner, so an org an operator sets up for a person who has no
 // account yet is a claim, which that person accepts on their first sign-in
-// with the claim's token. Accepting creates the org (the starter, through
-// its auth library) and records its id here.
+// with the claim's token. Accepting marks the claim, creates the org (the
+// starter, through its auth library) and records its id here.
 //
 // Not a tenant table: the org does not exist while the claim is open. No
 // foreign keys: the claim stores an email and, once accepted, an org id,
@@ -211,19 +211,69 @@ export async function findOpenClaimByToken(
   return row ?? null
 }
 
-// Records the org an open, unexpired claim became. Resolves to true when
-// this call accepted it, false when it was accepted, canceled or expired
-// already (a second accept changes nothing).
-export async function acceptOrgClaim(
+// Accepting a claim takes two steps (audit F28): markClaimAccepted() first,
+// in one conditional statement, so that of two concurrent accepts only one
+// changes the row and goes on to create the org; then setClaimOrg() with
+// the org it created. While only marked, the claim is 'accepted' with orgId
+// null, and findOpenClaimByToken() no longer finds it. When the org cannot
+// be created, releaseClaimMark() reopens the claim for a retry.
+
+// Marks an open, unexpired claim accepted (accepted_at = now, org_id null).
+// Resolves to true when this call marked it, false when it was accepted,
+// canceled or expired already.
+export async function markClaimAccepted(
   db: TenantDatabase,
   id: string,
-  orgId: OrgId,
   now: number = Date.now(),
 ): Promise<boolean> {
   const result = await db
     .update(orgClaims)
-    .set({ acceptedAt: now, orgId })
+    .set({ acceptedAt: now, orgId: null })
     .where(and(eq(orgClaims.id, id), open, gt(orgClaims.expiresAt, now)))
+    .run()
+  return result.meta.changes === 1
+}
+
+// Records the org a marked claim became. Resolves to true when this call
+// wrote it, false when the claim is not marked or already has its org.
+export async function setClaimOrg(
+  db: TenantDatabase,
+  id: string,
+  orgId: OrgId,
+): Promise<boolean> {
+  const result = await db
+    .update(orgClaims)
+    .set({ orgId })
+    .where(
+      and(
+        eq(orgClaims.id, id),
+        isNotNull(orgClaims.acceptedAt),
+        isNull(orgClaims.orgId),
+        isNull(orgClaims.canceledAt),
+      ),
+    )
+    .run()
+  return result.meta.changes === 1
+}
+
+// Reopens a claim that markClaimAccepted() marked at acceptedAt and that has
+// no org yet (its org could not be created). Resolves to true when this call
+// reopened it.
+export async function releaseClaimMark(
+  db: TenantDatabase,
+  id: string,
+  acceptedAt: number,
+): Promise<boolean> {
+  const result = await db
+    .update(orgClaims)
+    .set({ acceptedAt: null })
+    .where(
+      and(
+        eq(orgClaims.id, id),
+        eq(orgClaims.acceptedAt, acceptedAt),
+        isNull(orgClaims.orgId),
+      ),
+    )
     .run()
   return result.meta.changes === 1
 }
