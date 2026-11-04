@@ -819,9 +819,17 @@ params: ${params.join(',')}`)
     const summary = errorSummary(error)
     expect(summary).toEqual({ name: 'DrizzleQueryError', code: 'D1_ERROR' })
     expect(JSON.stringify(summary)).not.toContain('ada@example.com')
+    // An error's own code is kept only when it is a D1 or SQLite code
+    // (audit F58).
+    expect(
+      errorSummary(Object.assign(new Error('x'), { code: 'SQLITE_BUSY' })),
+    ).toEqual({ name: 'Error', code: 'SQLITE_BUSY' })
     expect(
       errorSummary(Object.assign(new Error('x'), { code: 'E_LIMIT' })),
-    ).toEqual({ name: 'Error', code: 'E_LIMIT' })
+    ).toEqual({ name: 'Error', code: 'unknown' })
+    expect(
+      errorSummary(Object.assign(new Error('x'), { code: 'ada@example.com' })),
+    ).toEqual({ name: 'Error', code: 'unknown' })
     expect(errorSummary(new TypeError('secret value'))).toEqual({
       name: 'TypeError',
       code: null,

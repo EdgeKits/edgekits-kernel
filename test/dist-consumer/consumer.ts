@@ -325,6 +325,12 @@ export const adminShapeD1: [
   Equal<Awaited<ReturnType<AdminRpc['createOrgClaim']>>, OrgClaimRecord>,
   Equal<Awaited<ReturnType<AdminRpc['listUsers']>>, Page<UserSummary>>,
   Equal<Awaited<ReturnType<AdminRpc['restorePlan']>>, PlanRecord>,
+  // P1-12 fixes 2 (audit F55).
+  Equal<
+    Parameters<AdminRpc['setBillingContact']>,
+    [admin: AdminContext, orgId: string, userId: string]
+  >,
+  Equal<OrgDetail['billingContact'], string | null>,
   Equal<
     Awaited<ReturnType<AdminRpc['inviteMember']>>,
     { invitationId: string }
@@ -341,7 +347,7 @@ export const adminShapeD1: [
     Parameters<BillingProvider['updateProduct']>,
     [providerProductId: string, patch: { name: string }]
   >,
-] = [true, true, true, true, true, true, true, true, true, true]
+] = [true, true, true, true, true, true, true, true, true, true, true, true]
 
 export const claimsTable: typeof orgClaims = orgClaims
 

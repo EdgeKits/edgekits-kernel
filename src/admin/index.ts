@@ -143,6 +143,9 @@ export interface OrgDetail extends OrgSummary {
   kernelTrial: SubscriptionRecord | null
   // The org's suspension row, in force or lifted, or null.
   suspension: SuspensionRecord | null
+  // The email of the org's customer at the billing provider (its billing
+  // contact, audit F55), or null while the org has no customer.
+  billingContact: string | null
   // The last 20 audit log rows, newest first, and the names of the users
   // they name.
   activity: ActivityEntry[]
@@ -321,4 +324,12 @@ export interface AdminRpc {
   // admin.plan_restored: the plan, the prices archived with it, and their
   // product and prices at the provider (restoreProduct, restorePrice).
   restorePlan(admin: AdminContext, planId: PlanId): Promise<PlanRecord>
+  // admin.billing_contact_set: the org's billing contact becomes userId, an
+  // owner of the org (audit F55). The provider customer's email changes to
+  // that user's, so the provider's portal and receipts follow.
+  setBillingContact(
+    admin: AdminContext,
+    orgId: OrgId,
+    userId: UserId,
+  ): Promise<void>
 }

@@ -235,9 +235,12 @@ const samples: Samples = {
   },
   'billing.rejected': {
     ...billing('e0', 'billing.rejected'),
+    orgId: systemOrgId,
     type: 'billing.rejected',
     providerSubscriptionId: 'sub_1',
-    reason: 'foreign-customer',
+    providerTransactionId: 'txn_1',
+    routedOrgId: 'A',
+    reason: 'unbound-transaction',
   },
   'subscription.created': {
     ...billing('e2', 'subscription.created'),
@@ -545,6 +548,12 @@ const samples: Samples = {
     type: 'admin.plan_restored',
     plan: 'team',
   },
+  'admin.billing_contact_set': {
+    ...admin,
+    sourceId: 'a23',
+    type: 'admin.billing_contact_set',
+    userId: 'user_2',
+  },
 }
 
 describe('KernelEvent', () => {
@@ -614,7 +623,7 @@ describe('KernelEvent', () => {
     >().toBeNever()
     // At run time, over one sample of each type (Samples is exhaustive).
     const all = Object.values(samples) as KernelEvent[]
-    expect(all).toHaveLength(52)
+    expect(all).toHaveLength(53)
     for (const event of all) {
       expect(typeof event.occurredAt, event.type).toBe('number')
       expect(typeof event.sourceId, event.type).toBe('string')
@@ -643,6 +652,11 @@ describe('KernelEvent', () => {
         }
       >['orgId']
     >().toEqualTypeOf<'system'>()
+    // A refused notification is never written under the org it names
+    // (audit F57).
+    expectTypeOf<
+      Extract<BillingEvent, { type: 'billing.rejected' }>['orgId']
+    >().toEqualTypeOf<'system'>()
     // Written under an org: the claim's new org, the invitation's org.
     expectTypeOf<
       Extract<
@@ -663,7 +677,7 @@ describe('KernelEvent', () => {
     const admins = (Object.values(samples) as KernelEvent[]).filter((event) =>
       event.type.startsWith('admin.'),
     ) as AdminEvent[]
-    expect(admins).toHaveLength(23)
+    expect(admins).toHaveLength(24)
     for (const event of admins) {
       expect(event.actorId, event.type).toMatch(/^admin:/)
     }

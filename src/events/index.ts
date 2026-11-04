@@ -49,11 +49,19 @@ export type BillingEvent = BillingEventCommon &
   (
     | { type: 'customer.linked'; providerCustomerId: string }
     // A notification the adapter refused to apply to the org its custom_data
-    // names (audit F29): the subscription's customer is not the org's.
-    // Written under that org; nothing else changes.
+    // names (audit F29): the subscription is not bound to that org (its
+    // creating transaction is not one the org's checkout made, or a later
+    // notification names a subscription no org's checkout bound), or its
+    // customer is not the org's. Written under systemOrgId, never under the
+    // org named (audit F57), with that org as routedOrgId and providerTransactionId the
+    // creating transaction when the notification carries one; nothing else
+    // changes.
     | {
         type: 'billing.rejected'
+        orgId: typeof systemOrgId
         providerSubscriptionId: string
+        providerTransactionId?: string
+        routedOrgId: OrgId
         reason: string
       }
     // The provider created the subscription; same payload as activated.
@@ -222,6 +230,9 @@ export type AdminEvent = KernelEventCommon & {
         userId: UserId
       }
     | { type: 'admin.plan_restored'; orgId: typeof systemOrgId; plan: PlanId }
+    // The org's billing contact moved to userId, one of its owners (audit
+    // F55): the provider customer's email is now that user's.
+    | { type: 'admin.billing_contact_set'; userId: UserId }
   )
 
 export type KernelEvent = BillingEvent | OrgEvent | LifecycleEvent | AdminEvent

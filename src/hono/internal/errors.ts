@@ -31,12 +31,54 @@ export const logDenial = (entry: DenialEntry): void => {
 // database error, the driver's code. Never the message: Drizzle's
 // DrizzleQueryError message carries the query's bound parameters (emails,
 // names, token hashes), and a D1 error's message can quote values too.
+// code is null when the error carries none, and 'unknown' when it carries one
+// that is not a D1 or SQLite code (audit F58): an error's own code property
+// is whatever its thrower put there.
 export interface ErrorSummary {
   name: string
   code: string | null
 }
 
+// D1's error constants (developers.cloudflare.com/d1/observability/debug-d1,
+// "Error list") and SQLite's primary result codes, the codes D1 errors name.
+// Drizzle's DrizzleQueryError carries none of its own.
+const DATABASE_CODES: ReadonlySet<string> = new Set([
+  'D1_ERROR',
+  'D1_EXEC_ERROR',
+  'D1_TYPE_ERROR',
+  'D1_COLUMN_NOTFOUND',
+  'SQLITE_ERROR',
+  'SQLITE_INTERNAL',
+  'SQLITE_PERM',
+  'SQLITE_ABORT',
+  'SQLITE_BUSY',
+  'SQLITE_LOCKED',
+  'SQLITE_NOMEM',
+  'SQLITE_READONLY',
+  'SQLITE_INTERRUPT',
+  'SQLITE_IOERR',
+  'SQLITE_CORRUPT',
+  'SQLITE_NOTFOUND',
+  'SQLITE_FULL',
+  'SQLITE_CANTOPEN',
+  'SQLITE_PROTOCOL',
+  'SQLITE_EMPTY',
+  'SQLITE_SCHEMA',
+  'SQLITE_TOOBIG',
+  'SQLITE_CONSTRAINT',
+  'SQLITE_MISMATCH',
+  'SQLITE_MISUSE',
+  'SQLITE_NOLFS',
+  'SQLITE_AUTH',
+  'SQLITE_FORMAT',
+  'SQLITE_RANGE',
+  'SQLITE_NOTADB',
+])
+
 const D1_CODE = /\b(D1_[A-Z_]+|SQLITE_[A-Z_]+)\b/
+
+const allowed = (code: string): string =>
+  DATABASE_CODES.has(code) ? code : 'unknown'
 
 export function errorSummary(error: unknown): ErrorSummary {
   if (!(error instanceof Error)) return { name: typeof error, code: null }
@@ -46,15 +88,15 @@ export function errorSummary(error: unknown): ErrorSummary {
     seen.add(e)
     const own = (e as { code?: unknown }).code
     if (typeof own === 'string' && own !== '') {
-      code = own
+      code = allowed(own)
       break
     }
     // The driver's code word, read out of the cause's message; nothing else
     // of that message is kept.
     if (e !== error) {
       const match = D1_CODE.exec(e.message)
-      if (match) {
-        code = match[1] ?? null
+      if (match?.[1]) {
+        code = allowed(match[1])
         break
       }
     }
