@@ -128,6 +128,15 @@ export type OrgEvent = KernelEventCommon & { actorId: string } & (
       }
     | { type: 'member.removed'; userId: string; memberId: string }
     | { type: 'member.left'; userId: string; memberId: string }
+    // The org's billing contact moved to userId, an owner (audit F67);
+    // previousUserId is the user whose email the provider customer had, null
+    // when no user has it any more. Written for an owner's move and for an
+    // operator's, next to admin.billing_contact_set.
+    | {
+        type: 'billing.contact_set'
+        userId: string
+        previousUserId: string | null
+      }
   )
 
 // The organization lifecycle (ADR-012): the actor is the kit, the id the
@@ -138,6 +147,9 @@ export type LifecycleEvent = KernelEventCommon & {
     | { type: 'trial.started'; plan: PlanId; endsAt: number }
     | { type: 'trial.subscribed'; plan: PlanId }
     | { type: 'trial.expired'; plan: PlanId }
+    // The org starts without the card-free trial: its owner has used as many
+    // as the deployment allows (reason 'limit', audit F36).
+    | { type: 'trial.skipped'; plan: PlanId; reason: 'limit' }
   )
 
 // What an operator did through AdminRpc (P1-10). The actor is

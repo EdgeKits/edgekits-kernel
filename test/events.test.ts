@@ -376,6 +376,13 @@ const samples: Samples = {
     userId: 'user_1',
     memberId: 'mem_1',
   },
+  'billing.contact_set': {
+    ...user,
+    sourceId: 'u7',
+    type: 'billing.contact_set',
+    userId: 'user_2',
+    previousUserId: null,
+  },
   'trial.started': {
     ...lifecycle,
     sourceId: 'wf:start-trial',
@@ -394,6 +401,13 @@ const samples: Samples = {
     sourceId: 'wf:expire-trial',
     type: 'trial.expired',
     plan: 'pro',
+  },
+  'trial.skipped': {
+    ...lifecycle,
+    sourceId: 'wf:skip-trial',
+    type: 'trial.skipped',
+    plan: 'pro',
+    reason: 'limit',
   },
   'admin.override_set': {
     ...admin,
@@ -607,9 +621,10 @@ describe('KernelEvent', () => {
       | 'member.role_changed'
       | 'member.removed'
       | 'member.left'
+      | 'billing.contact_set'
     >()
     expectTypeOf<LifecycleEvent['type']>().toEqualTypeOf<
-      'trial.started' | 'trial.subscribed' | 'trial.expired'
+      'trial.started' | 'trial.subscribed' | 'trial.expired' | 'trial.skipped'
     >()
   })
 
@@ -623,7 +638,7 @@ describe('KernelEvent', () => {
     >().toBeNever()
     // At run time, over one sample of each type (Samples is exhaustive).
     const all = Object.values(samples) as KernelEvent[]
-    expect(all).toHaveLength(53)
+    expect(all).toHaveLength(55)
     for (const event of all) {
       expect(typeof event.occurredAt, event.type).toBe('number')
       expect(typeof event.sourceId, event.type).toBe('string')
