@@ -31,13 +31,40 @@ const initial = (): SubscriptionState => ({
   appliedEventIds: [],
 })
 
+const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+
+// Sibling events (one provider notification, one providerEventId) are
+// applied in this order: the subscription's terms first, then status
+// changes, terminal statuses last; the sourceId breaks a remaining tie.
+// [updated, canceled] of one notification therefore ends 'canceled' in any
+// array order (audit F90).
+const siblingRank: Record<BillingEvent['type'], number> = {
+  'customer.linked': 0,
+  'billing.rejected': 0,
+  'subscription.created': 1,
+  'subscription.activated': 1,
+  'subscription.updated': 2,
+  'subscription.scheduled_cancel': 3,
+  'subscription.resumed': 3,
+  'invoice.paid': 3,
+  'invoice.failed': 3,
+  'refund.created': 3,
+  'dispute.opened': 3,
+  'license.issued': 3,
+  'credits.granted': 3,
+  'credits.consumed': 3,
+  'credits.exhausted': 3,
+  'subscription.paused': 4,
+  'subscription.past_due': 4,
+  'subscription.canceled': 5,
+  'subscription.expired': 5,
+}
+
 const byOccurrence = (a: BillingEvent, b: BillingEvent) =>
   a.occurredAt - b.occurredAt ||
-  (a.providerEventId < b.providerEventId
-    ? -1
-    : a.providerEventId > b.providerEventId
-      ? 1
-      : 0)
+  compare(a.providerEventId, b.providerEventId) ||
+  siblingRank[a.type] - siblingRank[b.type] ||
+  compare(a.sourceId, b.sourceId)
 
 function apply(state: SubscriptionState, event: BillingEvent) {
   switch (event.type) {
@@ -95,17 +122,23 @@ function apply(state: SubscriptionState, event: BillingEvent) {
 }
 
 // Pure: the same event set yields the same state in any array order. Events
-// are applied by (occurredAt, providerEventId); a repeated id is applied once.
+// are applied by (occurredAt, providerEventId, sibling rank, sourceId); a
+// repeated sourceId (a redelivery of one fact) is applied once. The dedup key
+// is the fact's sourceId, not the providerEventId its siblings share: keyed
+// on providerEventId, only the first sibling in array order was applied
+// (audit F90). appliedEventIds lists the provider event ids applied.
 export function applySubscriptionEvents(
   events: readonly BillingEvent[],
 ): SubscriptionState {
   const state = initial()
   const seen = new Set<string>()
+  const providerIds = new Set<string>()
   for (const event of [...events].sort(byOccurrence)) {
-    if (seen.has(event.providerEventId)) continue
-    seen.add(event.providerEventId)
+    if (seen.has(event.sourceId)) continue
+    seen.add(event.sourceId)
+    providerIds.add(event.providerEventId)
     apply(state, event)
   }
-  state.appliedEventIds = [...seen].sort()
+  state.appliedEventIds = [...providerIds].sort()
   return state
 }

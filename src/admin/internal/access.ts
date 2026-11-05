@@ -10,9 +10,11 @@ export interface Jwks {
 }
 
 export interface AccessIdentityOptions {
-  // https://<team>.cloudflareaccess.com; also the expected iss.
+  // https://<team>.cloudflareaccess.com; also the expected iss. Required
+  // (non-empty) outside mode 'dev'.
   teamDomain: string
-  // The Access application's AUD tag.
+  // The Access application's AUD tag. Required (non-empty) outside mode
+  // 'dev': accessIdentity() throws at construction without it.
   aud: string
   // 'dev' trusts devIdentity and never reads the header: it is for local
   // runs only (audit F5).
@@ -118,7 +120,10 @@ const requestId = (header: string | undefined) => header ?? crypto.randomUUID()
 export function accessIdentity(
   options: AccessIdentityOptions,
 ): MiddlewareHandler<{ Variables: AdminVariables }> {
-  const issuer = options.teamDomain.replace(/\/+$/, '')
+  const issuer =
+    typeof options.teamDomain === 'string'
+      ? options.teamDomain.replace(/\/+$/, '')
+      : ''
   const url = `${issuer}/cdn-cgi/access/certs`
   const jwks = jwksCache(url, options.fetchJwks ?? fetchFrom(url))
   const devIdentity = options.devIdentity
@@ -132,6 +137,21 @@ export function accessIdentity(
   }
   if (options.mode === 'dev' && !devIdentity) {
     throw new Error("accessIdentity: mode 'dev' requires devIdentity")
+  }
+  // Hono checks iss and aud only when they are truthy: an empty value would
+  // skip the binding silently (audit F88), so every mode that verifies
+  // tokens refuses to start without both.
+  if (options.mode !== 'dev') {
+    if (typeof options.aud !== 'string' || options.aud.trim() === '') {
+      throw new Error(
+        "accessIdentity: aud is required outside mode 'dev' (the Access application's AUD tag)",
+      )
+    }
+    if (issuer.trim() === '') {
+      throw new Error(
+        "accessIdentity: teamDomain is required outside mode 'dev' (https://<team>.cloudflareaccess.com)",
+      )
+    }
   }
 
   return createMiddleware<{ Variables: AdminVariables }>(async (c, next) => {
@@ -182,6 +202,14 @@ export function accessIdentity(
         verification: { iss: issuer, aud: options.aud },
       })
     } catch {
+      return forbidden('invalid-token')
+    }
+    // iss and aud are compared here as well, so that the binding does not
+    // rest on Hono's checks alone (audit F88): aud is a string or a list.
+    const audiences: unknown[] = Array.isArray(payload.aud)
+      ? payload.aud
+      : [payload.aud]
+    if (payload.iss !== issuer || !audiences.includes(options.aud)) {
       return forbidden('invalid-token')
     }
     // Hono checks exp only when present; Access tokens always carry it.

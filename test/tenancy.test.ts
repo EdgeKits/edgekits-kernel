@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import {
   getTableConfig,
@@ -44,7 +44,9 @@ const contextFor = (orgId: 'A' | 'B'): TenantContext =>
   })
 
 beforeAll(async () => {
-  for (const sql of createProjectsSql) await env.DB.prepare(sql).run()
+  for (const statement of createProjectsSql) {
+    await env.DB.prepare(statement).run()
+  }
 })
 
 describe('@edgekits/kernel/tenancy', () => {
@@ -128,6 +130,23 @@ describe('@edgekits/kernel/tenancy', () => {
       .bind(row.id)
       .first<{ org_id: string }>()
     expect(stored?.org_id).toBe('A')
+  })
+
+  // Audit F87: and() does not parenthesize its operands, so an ungrouped raw
+  // fragment rendered as (org_id = ? and a = 1 OR 1 = 1) and read every org.
+  it('findMany keeps a raw OR fragment inside the org scope', async () => {
+    const a = contextFor('A').db.repo(projects)
+    const b = contextFor('B').db.repo(projects)
+    await a.insert({ id: 'or-a', name: 'or-probe' })
+    await b.insert({ id: 'or-b', name: 'or-probe' })
+    const rows = await a.findMany(sql`${projects.name} = 'nomatch' OR 1 = 1`)
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.every((row) => row.orgId === 'A')).toBe(true)
+    expect(rows.map((row) => row.id)).not.toContain('or-b')
+    const probes = await a.findMany(
+      sql`${projects.name} = 'nomatch' OR ${projects.name} = 'or-probe'`,
+    )
+    expect(probes.map((row) => [row.orgId, row.id])).toEqual([['A', 'or-a']])
   })
 
   describe('ADR-008: tenant tables are keyed per tenant', () => {

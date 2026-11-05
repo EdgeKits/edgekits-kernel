@@ -22,8 +22,10 @@ export interface PolicyEngineOptions {
 }
 
 // Boolean entitlements as feature flags; the shape an OpenFeature provider
-// module wraps later.
+// module wraps later. For a suspended org every flag is false, whatever the
+// fallback, as entitled() answers 'suspended' first (audit F89).
 export interface EntitlementFlags {
+  readonly suspended: boolean
   getBooleanValue(key: EntitlementKey, fallback: boolean): boolean
 }
 
@@ -135,9 +137,11 @@ export function createPolicyEngine(options: PolicyEngineOptions): PolicyEngine {
     },
 
     async entitlementFlags(ctx) {
-      const { values } = await resolve(ctx)
+      const { values, suspended } = await resolve(ctx)
       return {
+        suspended: suspended !== null,
         getBooleanValue(key, fallback) {
+          if (suspended) return false
           const value = Object.hasOwn(values, key) ? values[key] : undefined
           return typeof value === 'boolean' ? value : fallback
         },

@@ -562,6 +562,33 @@ describe('createPolicyEngine: entitled()', () => {
     expect(flags.getBooleanValue('unknown', true)).toBe(true)
     const freeFlags = await engine.entitlementFlags(contextFor(freshOrg()))
     expect(freeFlags.getBooleanValue('ai', true)).toBe(false)
+    expect(flags.suspended).toBe(false)
+  })
+
+  // Audit F89: the flags kept the plan's values for a suspended org, while
+  // entitled() for the same key answered 'suspended'.
+  it('entitlementFlags answers like entitled() for a suspended org', async () => {
+    const ctx = contextFor(freshOrg())
+    await insertSubscription(ctx, {
+      kind: 'subscription',
+      plan: 'pro',
+      status: 'active',
+    })
+    await suspendOrg(ctx, { reason: 'r', adminId: 'adm-1' })
+    expect(await engine.entitled(ctx, 'ai')).toEqual({
+      ok: false,
+      reason: 'suspended',
+    })
+    const flags = await engine.entitlementFlags(ctx)
+    expect(flags.suspended).toBe(true)
+    expect(flags.getBooleanValue('ai', false)).toBe(false)
+    expect(flags.getBooleanValue('ai', true)).toBe(false)
+    expect(flags.getBooleanValue('unknown', true)).toBe(false)
+
+    await liftSuspension(ctx)
+    const lifted = await engine.entitlementFlags(ctx)
+    expect(lifted.suspended).toBe(false)
+    expect(lifted.getBooleanValue('ai', false)).toBe(true)
   })
 })
 

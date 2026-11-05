@@ -231,6 +231,42 @@ describe('@edgekits/kernel/admin', () => {
     ).toThrow(/refused in a production build/)
   })
 
+  // Audit F88: Hono skips the audience check for a falsy aud, so an empty
+  // aud would have accepted a token issued for another Access application.
+  it('refuses an empty or missing aud or teamDomain outside mode dev', () => {
+    const missing = undefined as unknown as string
+    for (const build of ['production', 'dev'] as const) {
+      for (const bad of ['', '   ', missing]) {
+        expect(() =>
+          accessIdentity({ teamDomain, aud: bad, mode: 'production', build }),
+        ).toThrow(/aud is required/)
+        expect(() =>
+          accessIdentity({ teamDomain: bad, aud, mode: 'production', build }),
+        ).toThrow(/teamDomain is required/)
+      }
+      expect(() =>
+        accessIdentity({ teamDomain: '/', aud, mode: 'production', build }),
+      ).toThrow(/teamDomain is required/)
+    }
+  })
+
+  it('rejects a token whose aud is missing or names another application', async () => {
+    const noAud: Record<string, unknown> = claims()
+    delete noAud.aud
+    for (const payload of [
+      noAud,
+      claims({ aud: [] }),
+      claims({ aud: 'another-app' }),
+      claims({ aud: ['another-app', 'aud-tag'] }),
+    ]) {
+      const token = await signJwt(keys.privateKey, 'k1', payload)
+      const res = await app().request('/', withToken(token))
+      expect(res.status).toBe(403)
+    }
+    const single = await signJwt(keys.privateKey, 'k1', claims({ aud }))
+    expect((await app().request('/', withToken(single))).status).toBe(200)
+  })
+
   it('accepts mode production in a dev build', () => {
     expect(() =>
       accessIdentity({ teamDomain, aud, mode: 'production', build: 'dev' }),

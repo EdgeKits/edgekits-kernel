@@ -147,6 +147,59 @@ describe('@edgekits/kernel/events', () => {
     expect(permutations).toBe(50)
   })
 
+  // Audit F90: dedup on providerEventId applied only the first sibling of one
+  // notification in array order, so [updated, canceled] ended 'active' and
+  // [canceled, updated] ended 'canceled'. Every sibling now applies, in the
+  // fixed order terms, status changes, terminal statuses.
+  it('applies every sibling event of one notification, in any order', () => {
+    const activated: BillingEvent = {
+      type: 'subscription.activated',
+      occurredAt: 1000,
+      providerEventId: 'evt_1',
+      sourceId: 'evt_1:subscription.activated',
+      orgId: 'A',
+      plan: 'pro',
+      seats: 1,
+      periodEnd,
+      trial: false,
+    }
+    const updated: BillingEvent = {
+      type: 'subscription.updated',
+      occurredAt: 2000,
+      providerEventId: 'evt_2',
+      sourceId: 'evt_2:subscription.updated',
+      orgId: 'A',
+      plan: 'pro',
+      seats: 2,
+      periodEnd,
+    }
+    const canceled: BillingEvent = {
+      type: 'subscription.canceled',
+      occurredAt: 2000,
+      providerEventId: 'evt_2',
+      sourceId: 'evt_2:subscription.canceled',
+      orgId: 'A',
+    }
+    const expected = {
+      plan: 'pro',
+      status: 'canceled',
+      seats: 2,
+      periodEnd,
+      cancelAt: null,
+      credits: 0,
+      appliedEventIds: ['evt_1', 'evt_2'],
+    }
+    const orders = [
+      [activated, updated, canceled],
+      [activated, canceled, updated],
+      [canceled, updated, activated],
+      [updated, canceled, activated, canceled],
+    ]
+    for (const order of orders) {
+      expect(applySubscriptionEvents(order)).toEqual(expected)
+    }
+  })
+
   it('does not mutate its input', () => {
     const copy = structuredClone(fixture)
     applySubscriptionEvents(fixture)

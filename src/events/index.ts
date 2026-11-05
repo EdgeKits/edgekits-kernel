@@ -37,9 +37,9 @@ export interface KernelEventCommon {
 export const systemOrgId = 'system' as const
 
 // Billing events also carry the provider's event id; with occurredAt it
-// orders events and identifies duplicates in the reducer. Their sourceId is
-// the provider's event id plus the event type, so one notification that maps
-// to several events keeps one key per event.
+// orders events in the reducer. Their sourceId is the provider's event id
+// plus the event type, so one notification that maps to several events keeps
+// one key per event, and the reducer identifies duplicates by sourceId.
 export interface BillingEventCommon extends KernelEventCommon {
   providerEventId: string
 }

@@ -2,6 +2,7 @@ import {
   and,
   eq,
   getTableName,
+  sql,
   type InferInsertModel,
   type InferSelectModel,
   type SQL,
@@ -93,7 +94,11 @@ export function createTenantDb(db: TenantDatabase, orgId: OrgId): TenantDb {
           `${getTableName(table)} is not a tenant table; declare it with tenantTable().`,
         )
       }
-      const scope = (predicate?: SQL) => and(eq(table.orgId, orgId), predicate)
+      // Drizzle's and() parenthesizes the whole conjunction, not each
+      // operand, so the caller's predicate is grouped here: a raw sql``
+      // fragment with a top-level OR stays inside the org scope (audit F87).
+      const scope = (predicate?: SQL) =>
+        and(eq(table.orgId, orgId), predicate && sql`(${predicate})`)
       const name = getTableName(table)
       return {
         async findMany(where) {
