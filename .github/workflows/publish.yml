@@ -1,15 +1,15 @@
 # Publishes @edgekits/kernel to npm when a tag v* is pushed: the full gate
-# (npm run ci) from a fresh checkout, then npm publish with provenance
-# (https://docs.npmjs.com/generating-provenance-statements: id-token: write,
-# a GitHub-hosted runner, npm 9.5 or later, and a public repository that
-# matches package.json "repository").
+# (npm run ci) from a fresh checkout, then npm publish through npm trusted
+# publishing (https://docs.npmjs.com/trusted-publishers). The job holds no
+# npm token: npm exchanges the job's GitHub OIDC token (id-token: write) for
+# a short-lived publish credential, and signs the provenance statement with
+# it. Trusted publishing needs npm 11.5.1 or later and Node 22.14.0 or later;
+# provenance needs a public repository and a public package.
 #
 # What the maintainer sets, once:
-# - The repository secret NPM_TOKEN, the workflow's only secret: an npm
-#   granular access token with read and write on the @edgekits scope
-#   (packages and scopes), allowed to publish without an interactive 2FA
-#   prompt. It reaches only the publish step.
-# - The repository public (provenance refuses a private source repository).
+# - On npmjs.com, the package's Trusted Publisher: GitHub Actions,
+#   repository EdgeKits/edgekits-kernel, workflow file publish.yml.
+# - The repository public (provenance is not generated for a private one).
 # - A tag ruleset on v* so that only the maintainer can create release tags.
 # Then a release is: bump "version" in package.json and CHANGELOG.md, commit,
 # `git tag v<version>` and `git push origin v<version>`. The job stops when
@@ -32,7 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Mints the OIDC token npm signs the provenance statement with.
+      # Mints the OIDC token npm trusted publishing exchanges for the publish
+      # credential and signs the provenance statement with.
       id-token: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -40,9 +41,23 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          # Node 22 bundles npm 10, above provenance's 9.5 minimum.
-          node-version: 22
+          # Node 24 bundles npm 11; the next step asserts the 11.5.1 minimum.
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          # No dependency cache in a release build.
+          package-manager-cache: false
+      - name: npm is 11.5.1 or later (trusted publishing)
+        run: |
+          version="$(npm --version)"
+          node -e '
+            const [a, b, c] = process.argv[1].split(".").map(Number)
+            const ok = a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1)))
+            if (!ok) {
+              console.error(`npm ${process.argv[1]} is below 11.5.1.`)
+              process.exit(1)
+            }
+          ' "$version"
+          echo "npm $version"
       - name: The tag names package.json's version
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -52,7 +67,5 @@ jobs:
           fi
       - run: npm ci && npm run ci
       # prepack rebuilds dist/ from a clean directory before the tarball is
-      # made; publishConfig in package.json also asks for provenance.
+      # made. No token: the publish authenticates through OIDC.
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

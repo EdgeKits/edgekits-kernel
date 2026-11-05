@@ -2,6 +2,10 @@
 
 All notable changes to `@edgekits/kernel` are recorded here. The package follows semantic versioning with the 0.x rule: until 1.0, a minor release (0.2.0) may contain breaking changes, and every breaking change is listed under its release with the migration it needs. A patch release (0.1.1) never breaks.
 
+## 0.1.1 (2026-11-05)
+
+Publish through npm trusted publishing (OIDC) with provenance; no code changes. The publish workflow holds no npm token: npm exchanges the GitHub Actions OIDC token for the publish credential and attaches a provenance statement that links the tarball to its commit and workflow run.
+
 ## 0.1.0 (2026-11-05)
 
 The first public release: the kernel the EdgeKits SaaS Starter v1 is built on.
@@ -46,4 +50,4 @@ The kernel went through seven `security-scanner` reports during Phase 1 and a `s
 
 - `drizzle-orm` is a peer dependency (`^0.45.4`), next to `hono` (`^4.13.13`) and the optional `eslint` (`^9 || ^10`), so the app and the kernel share one Drizzle. `zod` is the only dependency.
 - Node 22 or later for the tooling (`/eslint` and the build). The runtime subpaths target Cloudflare Workers.
-- Published with npm provenance from the repository's publish workflow.
+- Published by hand, without npm provenance. Provenance starts with 0.1.1.

@@ -1,6 +1,6 @@
 {
   "name": "@edgekits/kernel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The core of the EdgeKits SaaS Kit for Cloudflare Workers: tenancy, policy and entitlements, billing events and ports, admin contract, typed config, Hono and Astro middleware.",
   "keywords": [
     "cloudflare-workers",

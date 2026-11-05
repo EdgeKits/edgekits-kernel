@@ -284,7 +284,15 @@ Pin a minor range (`~0.1.0`) or an exact version.
 4. `tsc` (including a check of the built declarations from a consumer's side, and a plain-Node import of every subpath)
 5. the Vitest suites (`workerd` with a local D1, and Node)
 
-Releases are published from GitHub Actions with npm provenance.
+## Releasing
+
+Releases are published by `.github/workflows/publish.yml` through npm trusted publishing (OIDC): the workflow holds no npm token, and every release carries an npm provenance statement that links the tarball to its commit and workflow run.
+
+1. Bump `version` in `package.json` (and the lockfile's root entry) and add the release to `CHANGELOG.md`; commit.
+2. Tag the commit `v<version>` (for example `v0.1.1`) and push the tag.
+3. The workflow checks that the tag names `package.json`'s version, runs `npm ci && npm run ci`, and publishes.
+
+0.1.0 was published by hand and carries no provenance; provenance starts with 0.1.1.
 
 ## License
 
