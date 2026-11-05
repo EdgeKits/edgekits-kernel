@@ -1,0 +1,58 @@
+# Publishes @edgekits/kernel to npm when a tag v* is pushed: the full gate
+# (npm run ci) from a fresh checkout, then npm publish with provenance
+# (https://docs.npmjs.com/generating-provenance-statements: id-token: write,
+# a GitHub-hosted runner, npm 9.5 or later, and a public repository that
+# matches package.json "repository").
+#
+# What the maintainer sets, once:
+# - The repository secret NPM_TOKEN, the workflow's only secret: an npm
+#   granular access token with read and write on the @edgekits scope
+#   (packages and scopes), allowed to publish without an interactive 2FA
+#   prompt. It reaches only the publish step.
+# - The repository public (provenance refuses a private source repository).
+# - A tag ruleset on v* so that only the maintainer can create release tags.
+# Then a release is: bump "version" in package.json and CHANGELOG.md, commit,
+# `git tag v<version>` and `git push origin v<version>`. The job stops when
+# the tag and package.json disagree.
+#
+# Actions are pinned by commit SHA, the release in a comment, the same pins
+# as ci.yml.
+name: publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Mints the OIDC token npm signs the provenance statement with.
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          # Node 22 bundles npm 10, above provenance's 9.5 minimum.
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: The tag names package.json's version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version."
+            exit 1
+          fi
+      - run: npm ci && npm run ci
+      # prepack rebuilds dist/ from a clean directory before the tarball is
+      # made; publishConfig in package.json also asks for provenance.
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

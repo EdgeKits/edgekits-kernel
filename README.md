@@ -1,28 +1,198 @@
 # @edgekits/kernel
 
-`@edgekits/kernel` is the core of the EdgeKits SaaS Kit for Cloudflare Workers: tenancy, policy and entitlements, billing events, provider ports, admin contracts, blueprint configuration, and the Astro and Hono middleware that wires them into an app. Its runtime dependencies are `zod` and `drizzle-orm`, with `hono` as a peer dependency, and it has no Cloudflare runtime dependencies beyond types.
+The core of the EdgeKits SaaS Kit for Cloudflare Workers: multi-tenant data access, permissions and entitlements, billing events and provider ports, the admin contract, a typed blueprint and env, and the Hono and Astro middleware that wires them into a Worker. It is TypeScript, runs on `workerd`, stores its data in D1 through Drizzle, and has no Cloudflare runtime dependency beyond types.
 
-The package is consumed through subpaths only: `@edgekits/kernel/tenancy`, `/policy`, `/events`, `/ports`, `/admin`, `/config`, `/astro`, `/hono` and `/eslint`. The package root exports nothing. Inside the package, each subpath lives in `src/<name>/` with its public entry at `src/<name>/index.ts` and private code under `src/<name>/internal/`; a file may import its own subpath relatively, but reaches a sibling only as `@edgekits/kernel/<name>`. ESLint enforces this boundary.
+## What it is, and what it is not
 
-`defineSaaS()` from `@edgekits/kernel/config` describes the SaaS in one typed blueprint, `edgekits.config.ts`: name (the slug-like id), `displayName` (the name people read in mail subjects and page titles; defaults to `name`), `site.domain` (the apex domain, for the `x-default` hreflang and the mail footer; optional), locales, tenancy, auth, roles, the entitlement vocabulary, billing, flags, AI, admin and the installed modules. Providers are chosen with tagged factories such as `tenancy.orgs()`, `auth.betterAuth()` and `billing.paddle()`. The input is parsed with a Zod schema that rejects a malformed blueprint, and the return value keeps the entitlement keys and kinds and the billing provider in its type. The kernel's default roles `owner`, `admin` and `member` are merged under the blueprint's own. The blueprint holds no plans (ADR-010): `entitlements` names each key the app checks with its kind, `limit` or `switch` (at least one key; keys are one lowercase segment such as `members`), and plans are rows of the kernel's catalog tables, below. `billing` names the provider, the billing model, the currency and an optional proration mode. `validateAgainstProviders(blueprint, capabilities)` is a separate step that checks those choices (currency, model, proration) against a provider's capability manifest, such as `paddleCapabilities` from `@edgekits/kernel/ports`, and returns each unsupported choice with its path; trials belong to a plan's prices and are checked when a price is created.
+The kernel is a library of contracts and guarantees. An app imports the pieces it needs and supplies the rest:
 
-The same subpath types the Worker's environment. Each module declares its keys in a fragment, `defineEnv(name, { KEY: validator })`, with the validators `string()`, `number()`, `boolean()`, `url()` (`url({ https: true })` refuses every scheme but `https:`, and `allowLocalhost: true` also takes `http://localhost` for local runs), `email()`, `oneOf([...])` and `json(schema)` (any synchronous Standard Schema, such as a Zod schema; the value may be a JSON string or a JSON value from Wrangler's `vars`), each with `.optional()` or `.default(value)`. Defaults are for non-sensitive fallbacks only: a credential never belongs in source. A key starting with `PUBLIC_` is a client value (Astro's convention), any other key a server value. `composeEnv(fragments)` merges fragments into one schema, merges a key two fragments declare the same way and refuses one they declare differently, naming both fragments (two `json()` validators are the same only when they share the schema object), and lists the server and client keys. `parseEnv(composed, env)` returns the typed, frozen values, treating an empty string as unset, or throws `EnvError` naming every missing or invalid key; `checkEnv(composed, values, { mode: 'local' })` reports the same problems as data, and `checkEnv(composed, names, { mode: 'names' })` takes only the names that are set (for example from `wrangler secret list`) and reports the required server keys that are missing. A fragment may carry rules across its keys, `defineEnv(name, shape, { check })`: `check(env)` returns issues and reads `env.isSet(key)` and `env.value(key)`, and both modes of `checkEnv` run it after the per-key checks. In `names` mode a value is known only when passed in `options.values` (the deployed vars; secrets have names only), and in `local` mode `options.present` names keys set without a readable value (the names in `.dev.vars`), which count as set and are not reported. No message ever contains a value.
+- It **is** the tenant boundary (`TenantContext`, tenant tables, tenant-bound repositories), the policy engine, the plan catalog, the event vocabulary, the provider ports, the admin RPC contract and the request middleware.
+- It is **not** a framework or an app. It registers no routes, ships no UI, and implements no authentication. Sessions, membership lookup, the billing adapter, the mail sender and the `AdminRpc` implementation are the app's: the kernel defines their shape and checks what it receives.
+- It is **not** a hosted service. Nothing calls home, and the only network request the kernel makes is the Cloudflare Access JWKS fetch in `accessIdentity()`.
 
-Tenant data lives in tables declared with `tenantTable()` from `@edgekits/kernel/tenancy`. It wraps Drizzle's `sqliteTable`, adds the `org_id` column and its index, and registers the table as tenant-scoped; the caller never declares `org_id`. A registered table is queried only through `ctx.db.repo(table)` on a `TenantContext`, whose `findMany`, `findById`, `insert`, `update` and `delete` add `org_id = ctx.orgId` to every predicate and set it on every insert; no method takes an org id. A `TenantContext` comes from `resolveTenant()`, which re-verifies membership on every call. Tenant tables are exported from `*.tables.ts` files, and the lint layer below allows importing them only from repositories (in the kernel `src/**/repo.ts`), the tenancy subpath, a subpath's public `index.ts`, other `*.tables.ts` files, `drizzle.config.ts` files and tests. `/policy` re-exports its tables, `subscriptions` and `entitlementOverrides`, so an app's schema package can include them in its migrations. In development and tests, `tenantGuardLogger({ mode: 'strict' })` makes Drizzle throw on any select, update or delete of a tenant table without an `org_id` predicate. Per ADR-008 a table that declares `id` is keyed by `(org_id, id)`, so the same id can exist in two orgs and a column marked `.primaryKey()` is refused, while references between tenant tables go through `tenantReference()`, a composite foreign key that carries `org_id`, and a uniqueness violation raises `ConflictError`.
+The **EdgeKits SaaS Starter** is the paid composition built on this kernel: three Workers (site, app, admin) with Better Auth, Paddle billing, Workflows, the admin, the deploy runbook and the module registry. See [edgekits.dev](https://edgekits.dev).
 
-`@edgekits/kernel/policy` decides permissions and entitlements. `createPolicyEngine({ entitlements, roles, plans, counters })` takes the blueprint's vocabulary and roles and a plan source over the catalog (`planSource(db)`, below) and returns an engine: `can(ctx, permission)` matches the actor's role against its permission globs (`*`, `<resource>.*` or an exact `<resource>.<action>`, with the kernel's default roles merged under the blueprint's), and `entitled(ctx, key, delta = 1)` resolves the org's entitlements and checks one key. A boolean value is a feature gate; a number is a limit, `-1` is unlimited, and otherwise the request is allowed when the live count from `counters[key]` plus `delta` stays within it; a key with no value is denied with limit 0, and a key the vocabulary does not declare throws a `RangeError` (a misspelled key is a bug, not a denial). Denials are `Decision` objects; `requirePermission()` and `requireEntitlement()` throw them as `PolicyError`, which `errors()` turns into 403 or 402, and `entitlementFlags(ctx)` exposes the boolean values as flags (every flag false, and `suspended` true, for a suspended org). The pure `resolveEntitlements()` takes the org's rows from two tenant tables, `subscriptions` and `entitlement_overrides`, and resolves in this order: an unexpired admin override wins for its key (ADR-006); otherwise the plan comes from an active lifetime purchase, else the newest active subscription, else the newest trial whose `trialEndsAt` is still ahead, else the catalog's default plan (source `'default'`) if it has one, else no plan and no values. Expired trials and overrides are skipped, never changed. A `subscriptions` row's `cancelAt` (`cancel_at`) records a scheduled cancellation's effective time, or null; it does not change the resolution, since the status stays as it is until the provider ends the subscription. The tables are written only by the billing Workflow, by admin actions and by the kernel trial functions: `startKernelTrial()` starts a card-free trial the kernel runs (one per org, refused when the org already has a subscription row), `setTrialEnd()` moves its end, and `expireTrials()` marks due kernel trials as expired for a scheduled job, the one cross-org statement in the kernel, so it runs on a database handle without the strict tenant guard.
+## Install
 
-The plan catalog (ADR-010) is two tables of `/policy` that are not tenant tables: `plans` (id, name, entitlement values as JSON, the default flag, a trial `{ days, requiresCard }`, the display order, `archived_at`) and `plan_prices` (the provider's price id, keyed `(provider, id)`, with the plan, the provider's product id, `kind` `subscription` or `lifetime`, `period` `month`, `year` or `once`, the amount in minor units, the currency and an optional trial length). Only the admin Worker's `AdminRpc` and the seed write them, through `createPlan()` (values checked against the vocabulary: a limit takes a non-negative integer or `-1`, a switch a boolean, an unknown key is refused; the plan and its prices in one D1 batch), `updatePlan()`, `setDefaultPlan()`, `addPrice()`, `archivePrice()` and `archivePlan()`. Nothing is deleted. At most one plan that is not archived is the default: `setDefaultPlan()` clears and sets the flag in one batch, and a partial unique index refuses a second default written any other way. `archivePlan()` is refused with `ConflictError` while any org has an `active`, `trialing`, `past_due` or `paused` row on the plan; the check is part of the archiving statement and reads every org's rows, so it runs on a handle without the strict tenant guard. `PlanError` (`invalid` with its issues, or `not-found`) maps to 400 or 404 through `errors()`. `planInputIssues(vocabulary, input)` reports what `createPlan()` would refuse without writing, for a caller that must validate before a provider call. Readers use `listPlans()`, `getPlan()`, `priceForPlan(db, provider, plan, period)` (the newest price on sale) and `planForPrice(db, provider, priceId)` (archived prices included, so a subscription keeps its plan). `planSource(db, { ttlMs = 60000 })` caches the catalog per isolate for the engine; the catalog code calls its `invalidate()` after every write.
+```sh
+npm install @edgekits/kernel drizzle-orm hono
+```
 
-The `BillingProvider` port in `@edgekits/kernel/ports` covers webhooks (`verify`, `parse`, `normalize`, `fetchSubscription`), checkout and portal, `changePlan(ctx, plan, mode)` with every `ProrationMode` (`immediate`, `none`, `period-end`), `cancel(ctx, 'period-end' | 'now')` and `keep(ctx)`, and the catalog: `createProduct({ id, name })`, `createPrice({ providerProductId, amount, currency, period, trialDays? })`, `archivePrice(id)` and `archiveProduct(id)`. Before any provider call, an adapter checks a price with `assertPriceSupported(provider, capabilities, { ...price, model })`, which throws `CapabilityError` (400 through `errors()`) for a currency or model the manifest does not list, a trial without the `trials` capability or on a one-time price, and amounts that are not whole minor units.
+- `drizzle-orm` (`^0.45.4`) and `hono` (`^4.13.13`) are peer dependencies, so the app and the kernel share one copy of each.
+- `eslint` (`^9` or `^10`) is an optional peer, needed only for `@edgekits/kernel/eslint`.
+- `zod` is the kernel's only dependency.
+- Node 22 or later runs the tooling. The runtime subpaths target Cloudflare Workers; use `@cloudflare/workers-types` for the D1 types.
 
-The request pipeline is plain Hono middleware from `@edgekits/kernel/hono`, used for API routes and pages alike. `tenant()` reads the session through a callback, takes an org named by an API key or trusted caller over the session's active org, calls `resolveTenant()` and sets `c.var.tenant`; no session, no org or a refused membership responds 404, and the org id is never read from a query string or client header. `errors()` is the `app.onError` handler: a `PolicyError` becomes 402 (entitlement) or 403 (forbidden) with the decision in the body, a `TenancyError` 404, a `ConflictError` 409, anything else 500 with no detail. `noStore()` adds `Cache-Control: no-store` to authenticated responses that set no cache policy of their own, and `sameOrigin()` rejects mutating requests from an origin outside the allowed list, or without an `Origin` but with a cookie. `securityHeaders()` sets a strict Content-Security-Policy, `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options` and `Permissions-Policy` unless the response already has them; Astro islands hydrate through inline scripts, so an Astro app passes its own `csp` with the `script-src` it needs rather than relying on the kernel default. `@edgekits/kernel/astro` copies `c.var.tenant` and `c.var.admin` into Astro locals with `toLocals()`.
+## Subpaths
 
-`@edgekits/kernel/admin` provides `accessIdentity()`, which verifies the Cloudflare Access JWT in `Cf-Access-Jwt-Assertion` (RS256 against the team JWKS, with `iss`, `aud` and `exp` checked) and sets `c.var.admin`, or uses a configured identity in `mode: 'dev'`. The consumer passes the build it runs in, `build: import.meta.env.PROD ? 'production' : 'dev'`, and `mode: 'dev'` with `build: 'production'` throws when the middleware is built, so a fixed dev identity cannot reach a production bundle whatever the env says.
+The package root exports nothing. Import from a subpath:
 
-## Lint layer
+| Subpath                    | What it holds                                                                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@edgekits/kernel/tenancy` | `TenantContext`, `resolveTenant()`, `tenantTable()`, `tenantReference()`, tenant-bound repositories, the dev-time query guard, org claims                        |
+| `@edgekits/kernel/policy`  | the policy engine (`can()`, `entitled()`, `entitlementFlags()`), the entitlement resolver, subscriptions, overrides, suspension, kernel trials, the plan catalog |
+| `@edgekits/kernel/events`  | the `KernelEvent` vocabulary, `InboundEvent`, the `EventBus` port, the subscription reducer                                                                      |
+| `@edgekits/kernel/ports`   | the `BillingProvider` and `MailProvider` ports, billing capability manifests, price checks                                                                       |
+| `@edgekits/kernel/admin`   | the `AdminRpc` contract and `accessIdentity()`, the Cloudflare Access middleware                                                                                 |
+| `@edgekits/kernel/config`  | `defineSaaS()`, the typed blueprint, provider validation, the typed env                                                                                          |
+| `@edgekits/kernel/hono`    | `tenant()`, `requirePlan()`, `errors()`, `noStore()`, `sameOrigin()`, `securityHeaders()`                                                                        |
+| `@edgekits/kernel/astro`   | `KernelLocals` and `toLocals()` for Astro locals                                                                                                                 |
+| `@edgekits/kernel/eslint`  | `tenantTables()`, the flat-config fragment with the tenant-table rules                                                                                           |
 
-ADR-004's second layer ships as `@edgekits/kernel/eslint`, a flat-config fragment for ESLint 9 or 10 (an optional peer dependency); the kernel's own `eslint.config.js` uses the same file. `tenantTables(options)` returns two config objects with the plugin `edgekits`. `edgekits/tenant-table-access` reports a value import, re-export or dynamic import of a `*.tables` module in any file but the repositories and the allowed files; type-only imports pass. `edgekits/tenant-table-references` reports `.references()` on a column inside `tenantTable()` in a `*.tables.*` file (ADR-008: use `tenantReference()`, or `foreignKey()` for a non-tenant target). The options are globs relative to the config's directory: `repositories` (default `src/modules/*/repository.ts` and `src/modules/*/repo.ts`; a monorepo names its apps, such as `apps/*/src/modules/*/repository.ts`), `allow` (more allowed files, added to `**/*.tables.ts`, `**/drizzle.config.ts`, tests and `test/` folders), `files` (default every TypeScript and JavaScript file) and `shared`, the table modules that hold no tenant table, by name (`['auth.tables']`), which are not checked. The kernel's own tables are exported from its subpaths, not from a `*.tables` module, so the rule also knows them by name (`packages`, default `kernelTenantTables`): a value import of `subscriptions`, `entitlementOverrides` or `orgSuspensions` from `@edgekits/kernel/policy`, or of `orgClaims` from `@edgekits/kernel/tenancy`, a namespace import or an `export *` of those subpaths, is reported outside the repositories (audit F41). The first three are every `tenantTable()` the kernel registers (a test checks the list against `tenantTableNames()`); `org_claims` is no tenant table but is still queried only by repositories.
+### `/tenancy`
+
+```ts
+import { tenantTable } from '@edgekits/kernel/tenancy'
+import { text } from 'drizzle-orm/sqlite-core'
+
+// Adds org_id and its index; the primary key is (org_id, id).
+export const projects = tenantTable('projects', {
+  id: text(),
+  name: text().notNull(),
+})
+
+// In a repository: every query is bound to ctx.orgId.
+const rows = await ctx.db.repo(projects).findMany()
+```
+
+### `/policy`
+
+```ts
+import { createPolicyEngine, planSource } from '@edgekits/kernel/policy'
+
+const policy = createPolicyEngine({
+  entitlements: blueprint.entitlements,
+  roles: blueprint.roles,
+  plans: planSource(db),
+  counters: { projects: (ctx) => countProjects(ctx) },
+})
+
+policy.requirePermission(ctx, 'project.write') // 403 through errors()
+await policy.requireEntitlement(ctx, 'projects') // 402 at the limit
+```
+
+### `/events`
+
+```ts
+import {
+  applySubscriptionEvents,
+  type BillingEvent,
+} from '@edgekits/kernel/events'
+
+// Pure: the same events give the same state in any order, duplicates once.
+const state = applySubscriptionEvents(events as BillingEvent[])
+state.status // 'active' | 'trialing' | 'canceled' | ...
+```
+
+### `/ports`
+
+```ts
+import {
+  assertPriceSupported,
+  paddleCapabilities,
+} from '@edgekits/kernel/ports'
+
+// Throws CapabilityError (400 through errors()) before any provider call.
+assertPriceSupported('paddle', paddleCapabilities, {
+  amount: 1900,
+  currency: 'USD',
+  period: 'month',
+  model: 'flat',
+})
+```
+
+### `/admin`
+
+```ts
+import { accessIdentity } from '@edgekits/kernel/admin'
+
+admin.use(
+  accessIdentity({
+    teamDomain: env.ACCESS_TEAM_DOMAIN, // https://<team>.cloudflareaccess.com
+    aud: env.ACCESS_AUD, // required outside mode 'dev'
+    mode: 'production',
+    build: import.meta.env.DEV ? 'dev' : 'production',
+  }),
+)
+// c.var.admin is { admin: { id, email }, request }
+```
+
+### `/config`
+
+```ts
+import { auth, billing, defineSaaS, tenancy } from '@edgekits/kernel/config'
+
+export default defineSaaS({
+  name: 'acme',
+  locales: ['en'],
+  tenancy: tenancy.orgs({
+    personalWorkspace: true,
+    isolation: 'shared-d1',
+    residency: 'none',
+  }),
+  auth: auth.betterAuth({ methods: ['magic-link'], invitations: true }),
+  entitlements: { projects: { kind: 'limit' }, ai: { kind: 'switch' } },
+  billing: billing.paddle({ model: 'flat', currency: 'USD' }),
+})
+```
+
+```ts
+import {
+  composeEnv,
+  defineEnv,
+  parseEnv,
+  string,
+  url,
+} from '@edgekits/kernel/config'
+
+const schema = composeEnv([
+  defineEnv('auth', {
+    AUTH_SECRET: string({ min: 32 }),
+    APP_URL: url({ https: true }),
+  }),
+])
+const env = parseEnv(schema, workerEnv) // typed and frozen; errors name keys, never values
+```
+
+### `/hono`
+
+```ts
+import {
+  errors,
+  noStore,
+  requirePlan,
+  sameOrigin,
+  securityHeaders,
+  tenant,
+} from '@edgekits/kernel/hono'
+
+app.use(securityHeaders(), sameOrigin({ allowed: ['https://app.example.com'] }))
+app.use(
+  '/app/*',
+  tenant({ session, orgFromRequest: () => null, deps }),
+  noStore(),
+)
+app.use(
+  '/app/*',
+  requirePlan({ policy, allow: ['/app/billing'], billingPath: '/app/billing' }),
+)
+app.onError(errors())
+```
+
+### `/astro`
+
+```ts
+import { toLocals, type KernelLocals } from '@edgekits/kernel/astro'
+
+declare global {
+  namespace App {
+    interface Locals extends KernelLocals {}
+  }
+}
+// In the Worker, before the Astro handler: Object.assign(locals, toLocals(c))
+```
+
+### `/eslint`
 
 ```js
 // eslint.config.js
@@ -31,23 +201,91 @@ import { tenantTables } from '@edgekits/kernel/eslint'
 
 export default tseslint.config(
   ...tseslint.configs.recommended,
-  ...tenantTables({
-    repositories: ['apps/*/src/modules/*/repository.ts'],
-    shared: ['auth.tables'],
-  }),
+  ...tenantTables({ repositories: ['apps/*/src/modules/*/repository.ts'] }),
 )
 ```
 
-The rule sees imports, not queries: the dev-time query guard (`tenantGuardLogger`) remains the layer that catches a tenant query without an `org_id` predicate.
+## The tenancy guarantee
 
-Every public function declares its return type (the lint rule `@typescript-eslint/explicit-module-boundary-types` enforces it), and `npm run typecheck` ends with `check:dist`, which builds `dist/`, type-checks its declarations from a consumer's side with `skipLibCheck` off, and imports every subpath with plain Node, no bundler. For that, every relative import in `src/` names the emitted file with a `.js` extension; the lint rule `kernel/relative-extension` enforces it.
+Tenant data is reached only through a `TenantContext`, and the guarantee holds in three layers:
 
-## Continuous integration
+1. **Tenant-bound repositories.**
+   - `tenantTable()` adds the `org_id` column and its index, keys a table with an `id` by `(org_id, id)`, and registers it as a tenant table.
+   - `ctx.db.repo(table)` accepts only registered tables. It binds `org_id = ctx.orgId` to every read, update and delete, groups the caller's own predicate inside that binding, and sets `org_id` on every insert. No method takes an org id, and an `orgId` in the values is dropped.
+   - `resolveTenant()` builds the context only after it has checked that the org exists and the user is a member, on every request. The org id from a session or an API key is never trusted on its own.
+   - `tenantReference()` makes references between tenant tables composite foreign keys that carry `org_id`.
+2. **The lint rule.** `@edgekits/kernel/eslint` reports any import of a tenant table outside the repositories and the allowed files, including the kernel's own tenant tables by name.
+3. **The dev-time query guard.** `tenantGuardLogger({ mode: 'strict' })`, set on the Drizzle client in development and tests, throws on a select, update or delete of a tenant table without an `org_id` predicate. It catches raw SQL the lint cannot see.
 
-`npm run ci` runs the whole gate in order and stops at the first failure (`scripts/ci.mjs`): `npm ci`, `format:check`, `lint`, `typecheck` (which builds `dist/` and runs the dist consumer checks), `npm test` (both Vitest projects: workers in workerd, and node), the em-dash check over every tracked file, and a check that no tracked file matches `dev.vars`. `.github/workflows/ci.yml` runs it on every push and pull request (ubuntu-latest, Node 22). It needs no secret and no token, and it deploys and publishes nothing.
+## Billing port and capability manifest
 
-## Hono pieces, from the P1-12 gate
+`BillingProvider` is the contract a billing adapter implements:
 
-- `securityHeaders()` sends `Strict-Transport-Security` (`HSTS_DEFAULT`, `max-age=31536000; includeSubDomains`) on https requests only, never on a plain `http://localhost` run; `hsts: false` or a value of your own changes it (audit F43).
-- `errors()` logs a 500 as one JSON line through `logError`: the error's name and its database code (`errorSummary()`), never its message, because Drizzle's `DrizzleQueryError` message carries the query's bound parameters (audit F38). Use `errorSummary()` wherever you log an error yourself.
-- `string({ min })` in `/config` refuses a shorter value with a message that names the length, never the value (audit F42); use it for secrets.
+- **Webhooks:** `verify` over the raw body and secret, `parse`, `normalize` into `BillingEvent`s, and `fetchSubscription` for the re-fetch before entitlements are written.
+- **Checkout, portal and plan changes:** checkout and the portal URL, `changePlan()` with every `ProrationMode` (`immediate`, `none`, `period-end`), `cancel()`, `keep()` and refunds.
+- **The catalog:** products and prices.
+
+A provider's capabilities are data, a `BillingCapabilities` manifest such as `paddleCapabilities`: currencies, billing models, proration modes, trials and refunds. The manifest is used in two places:
+
+- `validateAgainstProviders(blueprint, capabilities)` in `/config` checks the blueprint's billing choices against it.
+- `assertPriceSupported()` checks each price before a provider call.
+
+The kernel's guidance for webhooks:
+
+- verify the raw body byte-exact;
+- treat events as unordered and duplicated;
+- re-fetch the subscription before writing entitlements (`applyProviderSubscription()` refuses a stale or foreign-provider overwrite);
+- acknowledge fast and apply in a durable step.
+
+## The admin contract
+
+`AdminRpc` is the interface an app's Worker entrypoint implements for an operator console. It covers:
+
+- orgs, members, users and activity;
+- entitlement overrides, suspension, trials and refunds;
+- the plan catalog and settings;
+- impersonation, org claims, invitations, user blocks and the billing contact.
+
+Every method takes an `AdminContext`, the verified operator. `accessIdentity()` produces it from the Cloudflare Access JWT in `Cf-Access-Jwt-Assertion`:
+
+- RS256 against the team JWKS;
+- `iss`, `aud` and `exp` checked;
+- `mode: 'dev'` refused in a production build.
+
+Every write emits its `admin.*` event (`AdminEvent` in `/events`).
+
+## The event vocabulary
+
+`KernelEvent` is one discriminated union:
+
+- **`BillingEvent`:** subscriptions, invoices, refunds, disputes, credits, licenses and rejected notifications.
+- **`OrgEvent`:** org creation, members and invitations, the billing contact.
+- **`LifecycleEvent`:** trials.
+- **`AdminEvent`:** every operator action.
+
+Every event names its org, its time and a `sourceId`, the idempotency key of the fact itself. Events that belong to no org use `systemOrgId`. An `EventBus` publishes them, and `noopEventBus` is the default.
+
+## Versioning
+
+The package follows semantic versioning with the 0.x rule. Until 1.0:
+
+- a minor release (0.2.0) may contain breaking changes, and each is listed in [CHANGELOG.md](./CHANGELOG.md) with its migration;
+- a patch release never breaks.
+
+Pin a minor range (`~0.1.0`) or an exact version.
+
+## Development
+
+`npm run ci` runs the whole gate, in order:
+
+1. `npm ci`
+2. Prettier
+3. ESLint (with the subpath boundary rule)
+4. `tsc` (including a check of the built declarations from a consumer's side, and a plain-Node import of every subpath)
+5. the Vitest suites (`workerd` with a local D1, and Node)
+
+Releases are published from GitHub Actions with npm provenance.
+
+## License
+
+MIT

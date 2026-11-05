@@ -1,11 +1,40 @@
 {
   "name": "@edgekits/kernel",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "The core of the EdgeKits SaaS Kit for Cloudflare Workers: tenancy, policy and entitlements, billing events and ports, admin contract, typed config, Hono and Astro middleware.",
+  "keywords": [
+    "cloudflare-workers",
+    "saas",
+    "multi-tenant",
+    "tenancy",
+    "entitlements",
+    "billing",
+    "drizzle",
+    "d1",
+    "hono",
+    "astro",
+    "edgekits"
+  ],
+  "homepage": "https://edgekits.dev",
+  "bugs": {
+    "url": "https://github.com/EdgeKits/edgekits-kernel/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EdgeKits/edgekits-kernel.git"
+  },
+  "license": "MIT",
   "type": "module",
   "private": false,
-  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "files": [
-    "dist"
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "exports": {
     "./tenancy": {
@@ -45,20 +74,39 @@
       "default": "./dist/eslint/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json && npm run check:dist",
     "check:dist": "npm run build && node test/dist-consumer/check.mjs && node test/dist-consumer/import.mjs",
     "test": "vitest run",
     "ci": "node scripts/ci.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "^0.45.4",
+    "eslint": "^9.0.0 || ^10.0.0",
+    "hono": "^4.13.13"
+  },
+  "peerDependenciesMeta": {
+    "eslint": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.5",
     "@cloudflare/workers-types": "^5.20261019.1",
     "drizzle-kit": "^0.31.11",
+    "drizzle-orm": "^0.45.4",
     "eslint": "^10.13.0",
     "hono": "^4.13.13",
     "prettier": "^3.9.10",
@@ -69,18 +117,5 @@
   "allowScripts": {
     "esbuild@0.28.2": true,
     "workerd@1.20261019.1": true
-  },
-  "dependencies": {
-    "drizzle-orm": "^0.45.4",
-    "zod": "^4.6.7"
-  },
-  "peerDependencies": {
-    "eslint": "^9.0.0 || ^10.0.0",
-    "hono": "^4.13.13"
-  },
-  "peerDependenciesMeta": {
-    "eslint": {
-      "optional": true
-    }
   }
 }
